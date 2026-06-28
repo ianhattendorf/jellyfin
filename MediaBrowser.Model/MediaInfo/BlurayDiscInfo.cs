@@ -1,5 +1,4 @@
-#nullable disable
-
+using System;
 using MediaBrowser.Model.Entities;
 
 namespace MediaBrowser.Model.MediaInfo;
@@ -13,7 +12,7 @@ public class BlurayDiscInfo
     /// Gets or sets the media streams.
     /// </summary>
     /// <value>The media streams.</value>
-    public MediaStream[] MediaStreams { get; set; }
+    public MediaStream[] MediaStreams { get; set; } = Array.Empty<MediaStream>();
 
     /// <summary>
     /// Gets or sets the run time ticks.
@@ -25,17 +24,17 @@ public class BlurayDiscInfo
     /// Gets or sets the files.
     /// </summary>
     /// <value>The files.</value>
-    public string[] Files { get; set; }
+    public string[] Files { get; set; } = Array.Empty<string>();
 
     /// <summary>
     /// Gets or sets the playlist name.
     /// </summary>
     /// <value>The playlist name.</value>
-    public string PlaylistName { get; set; }
+    public string? PlaylistName { get; set; }
 
     /// <summary>
     /// Gets or sets the chapters.
     /// </summary>
     /// <value>The chapters.</value>
-    public double[] Chapters { get; set; }
+    public double[] Chapters { get; set; } = Array.Empty<double>();
 }
