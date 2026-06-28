@@ -43,6 +43,7 @@ namespace MediaBrowser.Providers.MediaInfo
         IHasItemChangeMonitor
     {
         private readonly ILogger<ProbeProvider> _logger;
+        private readonly IBlurayExaminer _blurayExaminer;
         private readonly AudioResolver _audioResolver;
         private readonly SubtitleResolver _subtitleResolver;
         private readonly LyricResolver _lyricResolver;
@@ -84,6 +85,7 @@ namespace MediaBrowser.Providers.MediaInfo
             IMediaStreamRepository mediaStreamRepository)
         {
             _logger = loggerFactory.CreateLogger<ProbeProvider>();
+            _blurayExaminer = blurayExaminer;
             _audioResolver = new AudioResolver(loggerFactory.CreateLogger<AudioResolver>(), localization, mediaEncoder, fileSystem, namingOptions);
             _subtitleResolver = new SubtitleResolver(loggerFactory.CreateLogger<SubtitleResolver>(), localization, mediaEncoder, fileSystem, namingOptions);
             _lyricResolver = new LyricResolver(loggerFactory.CreateLogger<LyricResolver>(), localization, mediaEncoder, fileSystem, namingOptions);
@@ -124,6 +126,17 @@ namespace MediaBrowser.Providers.MediaInfo
         public bool HasChanged(BaseItem item, IDirectoryService directoryService)
         {
             var video = item as Video;
+            if (video?.VideoType == VideoType.BluRay
+                && IsBluRayPlaylistProbeRequired(video, _blurayExaminer.GetDiscFingerprint(video.Path)))
+            {
+                _logger.LogDebug(
+                    "Refreshing {ItemPath} because the selected Blu-ray playlist changed from {LastPlaylist} to {SelectedPlaylist}.",
+                    item.Path,
+                    video.BluRayLastProbedPlaylistName,
+                    video.BluRayPlaylistName);
+                return true;
+            }
+
             if (video is null || video.VideoType == VideoType.VideoFile || video.VideoType == VideoType.Iso)
             {
                 var path = item.Path;
@@ -170,6 +183,35 @@ namespace MediaBrowser.Providers.MediaInfo
             }
 
             return false;
+        }
+
+        internal static bool IsBluRayPlaylistProbeRequired(Video video, string currentFingerprint)
+        {
+            if (video.VideoType != VideoType.BluRay)
+            {
+                return false;
+            }
+
+            if (video.BluRayPlaylistProbeVersion != Video.CurrentBluRayPlaylistProbeVersion
+                || video.BluRayPlaylistRevision != video.BluRayLastProbedPlaylistRevision
+                || string.IsNullOrWhiteSpace(currentFingerprint)
+                || !string.Equals(video.BluRayDiscFingerprint, currentFingerprint, StringComparison.Ordinal))
+            {
+                return true;
+            }
+
+            if (string.IsNullOrWhiteSpace(video.BluRayPlaylistName))
+            {
+                return !string.IsNullOrWhiteSpace(video.BluRayLastProbedPlaylistName)
+                    || video.BluRayPlaylistNameIsValid is not null;
+            }
+
+            return video.BluRayPlaylistNameIsValid switch
+            {
+                true => !string.Equals(video.BluRayPlaylistName, video.BluRayLastProbedPlaylistName, StringComparison.OrdinalIgnoreCase),
+                false => !string.IsNullOrWhiteSpace(video.BluRayLastProbedPlaylistName),
+                null => true
+            };
         }
 
         /// <inheritdoc />

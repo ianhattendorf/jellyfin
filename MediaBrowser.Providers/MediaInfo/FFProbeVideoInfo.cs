@@ -355,6 +355,8 @@ namespace MediaBrowser.Providers.MediaInfo
                         video.BluRayDefaultPlaylistName = blurayInfo.PlaylistName;
                     }
                 }
+
+                video.BluRayLastProbedPlaylistName = video.BluRayPlaylistName;
             }
 
             if (blurayInfo.Chapters is not null)

@@ -97,6 +97,7 @@ public class FFProbeVideoInfoTests
             new BlurayDiscInfo { PlaylistName = "00801.MPLS" });
 
         Assert.True(video.BluRayPlaylistNameIsValid);
+        Assert.Equal("00801.mpls", video.BluRayLastProbedPlaylistName);
         Assert.Equal("00800.mpls", video.BluRayDefaultPlaylistName);
     }
 
@@ -118,6 +119,7 @@ public class FFProbeVideoInfoTests
             new BlurayDiscInfo { PlaylistName = "00802.mpls" });
 
         Assert.False(video.BluRayPlaylistNameIsValid);
+        Assert.Equal("00999.mpls", video.BluRayLastProbedPlaylistName);
         Assert.Equal("00802.mpls", video.BluRayDefaultPlaylistName);
         Assert.Equal("00802.mpls", video.EffectiveBluRayPlaylistName);
     }
@@ -140,6 +142,53 @@ public class FFProbeVideoInfoTests
             new BlurayDiscInfo { PlaylistName = "00803.mpls" });
 
         Assert.Null(video.BluRayPlaylistNameIsValid);
+        Assert.Null(video.BluRayLastProbedPlaylistName);
         Assert.Equal("00803.mpls", video.BluRayDefaultPlaylistName);
+    }
+
+    [Fact]
+    public void FetchBdInfo_WithSelectedPlaylist_ReplacesRuntimeAndMediaStreams()
+    {
+        var video = new Video
+        {
+            BluRayPlaylistName = "00100.mpls",
+            RunTimeTicks = TimeSpan.FromHours(2).Ticks
+        };
+        var chapters = Array.Empty<ChapterInfo>();
+        var streams = new List<MediaStream>
+        {
+            new()
+            {
+                Type = MediaStreamType.Video,
+                Width = 720,
+                Height = 480
+            }
+        };
+        var selectedRuntime = TimeSpan.FromMinutes(95).Ticks;
+
+        _fFProbeVideoInfo.FetchBdInfo(
+            video,
+            ref chapters,
+            streams,
+            new BlurayDiscInfo
+            {
+                PlaylistName = "00100.mpls",
+                RunTimeTicks = selectedRuntime,
+                MediaStreams =
+                [
+                    new MediaStream
+                    {
+                        Type = MediaStreamType.Video,
+                        Width = 1920,
+                        Height = 1080
+                    }
+                ]
+            });
+
+        Assert.Equal(selectedRuntime, video.RunTimeTicks);
+        var videoStream = Assert.Single(streams);
+        Assert.Equal(1920, videoStream.Width);
+        Assert.Equal(1080, videoStream.Height);
+        Assert.Equal("00100.mpls", video.BluRayLastProbedPlaylistName);
     }
 }

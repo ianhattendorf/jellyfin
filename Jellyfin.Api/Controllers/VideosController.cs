@@ -44,6 +44,7 @@ public class VideosController : BaseJellyfinApiController
     private readonly IMediaSourceManager _mediaSourceManager;
     private readonly IServerConfigurationManager _serverConfigurationManager;
     private readonly IMediaEncoder _mediaEncoder;
+    private readonly IBluRayPlaylistManager _bluRayPlaylistManager;
     private readonly ITranscodeManager _transcodeManager;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly EncodingHelper _encodingHelper;
@@ -59,6 +60,7 @@ public class VideosController : BaseJellyfinApiController
     /// <param name="mediaSourceManager">Instance of the <see cref="IMediaSourceManager"/> interface.</param>
     /// <param name="serverConfigurationManager">Instance of the <see cref="IServerConfigurationManager"/> interface.</param>
     /// <param name="mediaEncoder">Instance of the <see cref="IMediaEncoder"/> interface.</param>
+    /// <param name="bluRayPlaylistManager">Instance of the <see cref="IBluRayPlaylistManager"/> interface.</param>
     /// <param name="transcodeManager">Instance of the <see cref="ITranscodeManager"/> interface.</param>
     /// <param name="httpClientFactory">Instance of the <see cref="IHttpClientFactory"/> interface.</param>
     /// <param name="encodingHelper">Instance of <see cref="EncodingHelper"/>.</param>
@@ -69,6 +71,7 @@ public class VideosController : BaseJellyfinApiController
         IMediaSourceManager mediaSourceManager,
         IServerConfigurationManager serverConfigurationManager,
         IMediaEncoder mediaEncoder,
+        IBluRayPlaylistManager bluRayPlaylistManager,
         ITranscodeManager transcodeManager,
         IHttpClientFactory httpClientFactory,
         EncodingHelper encodingHelper)
@@ -79,6 +82,7 @@ public class VideosController : BaseJellyfinApiController
         _mediaSourceManager = mediaSourceManager;
         _serverConfigurationManager = serverConfigurationManager;
         _mediaEncoder = mediaEncoder;
+        _bluRayPlaylistManager = bluRayPlaylistManager;
         _transcodeManager = transcodeManager;
         _httpClientFactory = httpClientFactory;
         _encodingHelper = encodingHelper;
@@ -127,6 +131,125 @@ public class VideosController : BaseJellyfinApiController
 
         var result = new QueryResult<BaseItemDto>(items);
         return result;
+    }
+
+    /// <summary>
+    /// Gets Blu-ray playlists for a video.
+    /// </summary>
+    /// <param name="itemId">The item id.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <response code="200">Blu-ray playlists returned.</response>
+    /// <response code="400">Item is not a Blu-ray folder item.</response>
+    /// <response code="404">Video not found.</response>
+    /// <returns>The Blu-ray playlist candidates.</returns>
+    [HttpGet("{itemId}/BluRay/Playlists")]
+    [Authorize(Policy = Policies.RequiresElevation)]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<BluRayPlaylistListDto>> GetBluRayPlaylists(
+        [FromRoute, Required] Guid itemId,
+        CancellationToken cancellationToken)
+    {
+        var video = _libraryManager.GetItemById<Video>(itemId, User.GetUserId());
+        if (video is null)
+        {
+            return NotFound();
+        }
+
+        if (!IsEligibleBluRayFolder(video))
+        {
+            return BadRequest("Item is not a Blu-ray folder item.");
+        }
+
+        return await _bluRayPlaylistManager.GetPlaylistsAsync(video, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Sets the selected Blu-ray playlist for a video.
+    /// </summary>
+    /// <param name="itemId">The item id.</param>
+    /// <param name="request">The playlist selection request.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <response code="200">Blu-ray playlist selection updated.</response>
+    /// <response code="400">Invalid request or item type.</response>
+    /// <response code="404">Video not found.</response>
+    /// <returns>The updated Blu-ray playlist candidates.</returns>
+    [HttpPost("{itemId}/BluRay/Playlist")]
+    [Authorize(Policy = Policies.RequiresElevation)]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<BluRayPlaylistListDto>> SetBluRayPlaylist(
+        [FromRoute, Required] Guid itemId,
+        [FromBody, Required] UpdateBluRayPlaylistDto request,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(request.PlaylistName))
+        {
+            return BadRequest("PlaylistName is required. Use DELETE to reset automatic selection.");
+        }
+
+        var video = _libraryManager.GetItemById<Video>(itemId, User.GetUserId());
+        if (video is null)
+        {
+            return NotFound();
+        }
+
+        if (!IsEligibleBluRayFolder(video))
+        {
+            return BadRequest("Item is not a Blu-ray folder item.");
+        }
+
+        try
+        {
+            return await _bluRayPlaylistManager.UpdatePlaylistAsync(video, request.PlaylistName, cancellationToken).ConfigureAwait(false);
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// Clears the selected Blu-ray playlist for a video.
+    /// </summary>
+    /// <param name="itemId">The item id.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <response code="200">Blu-ray playlist selection cleared.</response>
+    /// <response code="400">Item is not a Blu-ray folder item.</response>
+    /// <response code="404">Video not found.</response>
+    /// <returns>The updated Blu-ray playlist candidates.</returns>
+    [HttpDelete("{itemId}/BluRay/Playlist")]
+    [Authorize(Policy = Policies.RequiresElevation)]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<BluRayPlaylistListDto>> ClearBluRayPlaylist(
+        [FromRoute, Required] Guid itemId,
+        CancellationToken cancellationToken)
+    {
+        var video = _libraryManager.GetItemById<Video>(itemId, User.GetUserId());
+        if (video is null)
+        {
+            return NotFound();
+        }
+
+        if (!IsEligibleBluRayFolder(video))
+        {
+            return BadRequest("Item is not a Blu-ray folder item.");
+        }
+
+        return await _bluRayPlaylistManager.UpdatePlaylistAsync(video, null, cancellationToken).ConfigureAwait(false);
+    }
+
+    private bool IsEligibleBluRayFolder(Video video)
+    {
+        return video.VideoType == VideoType.BluRay
+            && !video.IsVirtualItem
+            && video.LocationType == LocationType.FileSystem
+            && !string.IsNullOrWhiteSpace(video.Path)
+            && _mediaSourceManager.GetPathProtocol(video.Path) == MediaProtocol.File;
     }
 
     /// <summary>

@@ -48,7 +48,9 @@ public class ChapterManagerTests
                 Container = "mkv",
                 VideoType = VideoType.BluRay,
                 BluRayPlaylistName = "00801.mpls",
-                BluRayDefaultPlaylistName = "00800.mpls",
+                BluRayPlaylistNameIsValid = true,
+                BluRayLastProbedPlaylistName = "00801.mpls",
+                BluRayPlaylistProbeVersion = Video.CurrentBluRayPlaylistProbeVersion,
                 DefaultVideoStreamIndex = 0,
                 RunTimeTicks = TimeSpan.FromMinutes(1).Ticks
             };

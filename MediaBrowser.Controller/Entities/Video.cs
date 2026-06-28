@@ -147,6 +147,12 @@ namespace MediaBrowser.Controller.Entities
         public bool? BluRayPlaylistNameIsValid { get; set; }
 
         /// <summary>
+        /// Gets or sets the Blu-ray playlist name used by the last successful media probe.
+        /// </summary>
+        /// <value>The last successfully probed Blu-ray playlist name.</value>
+        public string BluRayLastProbedPlaylistName { get; set; }
+
+        /// <summary>
         /// Gets the selected Blu-ray playlist name, or the default playlist name when no playlist is selected.
         /// </summary>
         /// <value>The effective Blu-ray playlist name.</value>

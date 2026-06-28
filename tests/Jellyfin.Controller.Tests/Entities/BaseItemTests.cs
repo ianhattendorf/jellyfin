@@ -430,12 +430,14 @@ public class BaseItemTests
         {
             BluRayPlaylistName = "00801.mpls",
             BluRayPlaylistNameIsValid = true,
+            BluRayLastProbedPlaylistName = "00801.mpls",
             BluRayDefaultPlaylistName = "00800.mpls"
         };
 
         var json = JsonSerializer.Serialize(video, JsonDefaults.Options);
 
         Assert.Contains("\"BluRayPlaylistName\":\"00801.mpls\"", json, StringComparison.Ordinal);
+        Assert.Contains("\"BluRayLastProbedPlaylistName\":\"00801.mpls\"", json, StringComparison.Ordinal);
         Assert.DoesNotContain("EffectiveBluRayPlaylistName", json, StringComparison.Ordinal);
     }
 }

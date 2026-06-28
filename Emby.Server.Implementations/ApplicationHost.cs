@@ -45,6 +45,7 @@ using Jellyfin.Networking.Manager;
 using Jellyfin.Networking.Udp;
 using Jellyfin.Server.Implementations.FullSystemBackup;
 using Jellyfin.Server.Implementations.Item;
+using Jellyfin.Server.Implementations.Library;
 using Jellyfin.Server.Implementations.MediaSegments;
 using Jellyfin.Server.Implementations.SystemBackupService;
 using MediaBrowser.Common;
@@ -525,6 +526,7 @@ namespace Emby.Server.Implementations
             serviceCollection.AddSingleton<ILocalizationManager, LocalizationManager>();
 
             serviceCollection.AddSingleton<IBlurayExaminer, BdInfoExaminer>();
+            serviceCollection.AddSingleton<IBluRayPlaylistManager, BluRayPlaylistManager>();
 
             serviceCollection.AddSingleton<IUserDataManager, UserDataManager>();
 
