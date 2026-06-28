@@ -129,6 +129,33 @@ namespace MediaBrowser.Controller.Entities
         public VideoType VideoType { get; set; }
 
         /// <summary>
+        /// Gets or sets the selected Blu-ray playlist name.
+        /// </summary>
+        /// <value>The selected Blu-ray playlist name.</value>
+        public string BluRayPlaylistName { get; set; }
+
+        /// <summary>
+        /// Gets or sets the default Blu-ray playlist name selected during media probing.
+        /// </summary>
+        /// <value>The default Blu-ray playlist name.</value>
+        public string BluRayDefaultPlaylistName { get; set; }
+
+        /// <summary>
+        /// Gets or sets a value indicating whether the selected Blu-ray playlist was valid during the last media probe.
+        /// </summary>
+        /// <value>Whether the selected Blu-ray playlist was valid.</value>
+        public bool? BluRayPlaylistNameIsValid { get; set; }
+
+        /// <summary>
+        /// Gets the selected Blu-ray playlist name, or the default playlist name when no playlist is selected.
+        /// </summary>
+        /// <value>The effective Blu-ray playlist name.</value>
+        [JsonIgnore]
+        public string EffectiveBluRayPlaylistName => string.IsNullOrWhiteSpace(BluRayPlaylistName) || BluRayPlaylistNameIsValid == false
+            ? BluRayDefaultPlaylistName
+            : BluRayPlaylistName;
+
+        /// <summary>
         /// Gets or sets the type of the iso.
         /// </summary>
         /// <value>The type of the iso.</value>
@@ -518,6 +545,13 @@ namespace MediaBrowser.Controller.Entities
                 if (VideoType != newVideo.VideoType)
                 {
                     VideoType = newVideo.VideoType;
+                    updateType |= ItemUpdateType.MetadataImport;
+                }
+
+                if (!string.IsNullOrWhiteSpace(newVideo.BluRayPlaylistName)
+                    && !string.Equals(BluRayPlaylistName, newVideo.BluRayPlaylistName, StringComparison.Ordinal))
+                {
+                    BluRayPlaylistName = newVideo.BluRayPlaylistName;
                     updateType |= ItemUpdateType.MetadataImport;
                 }
             }

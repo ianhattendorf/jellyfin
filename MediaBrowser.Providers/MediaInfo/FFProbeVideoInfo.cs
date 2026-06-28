@@ -86,6 +86,8 @@ namespace MediaBrowser.Providers.MediaInfo
 
             if (!item.IsShortcut || options.EnableRemoteContentProbe)
             {
+                cancellationToken.ThrowIfCancellationRequested();
+
                 if (item.VideoType == VideoType.Dvd)
                 {
                     // Get list of playable .vob files
@@ -122,7 +124,7 @@ namespace MediaBrowser.Providers.MediaInfo
                 else if (item.VideoType == VideoType.BluRay)
                 {
                     // Get BD disc information
-                    blurayDiscInfo = GetBDInfo(item.Path);
+                    blurayDiscInfo = GetBDInfo(item.Path, item.BluRayPlaylistName);
 
                     // Return if no playable .m2ts files are found
                     if (blurayDiscInfo is null || blurayDiscInfo.Files.Length == 0)
@@ -313,7 +315,7 @@ namespace MediaBrowser.Providers.MediaInfo
             }
         }
 
-        private void FetchBdInfo(Video video, ref ChapterInfo[] chapters, List<MediaStream> mediaStreams, BlurayDiscInfo blurayInfo)
+        internal void FetchBdInfo(Video video, ref ChapterInfo[] chapters, List<MediaStream> mediaStreams, BlurayDiscInfo blurayInfo)
         {
             var ffmpegVideoStream = mediaStreams.FirstOrDefault(s => s.Type == MediaStreamType.Video);
             var externalStreams = mediaStreams.Where(s => s.IsExternal).ToList();
@@ -332,6 +334,27 @@ namespace MediaBrowser.Providers.MediaInfo
             if (blurayInfo.RunTimeTicks.HasValue && blurayInfo.RunTimeTicks.Value > 0)
             {
                 video.RunTimeTicks = blurayInfo.RunTimeTicks;
+            }
+
+            if (!string.IsNullOrWhiteSpace(blurayInfo.PlaylistName))
+            {
+                if (string.IsNullOrWhiteSpace(video.BluRayPlaylistName))
+                {
+                    video.BluRayPlaylistNameIsValid = null;
+                    video.BluRayDefaultPlaylistName = blurayInfo.PlaylistName;
+                }
+                else
+                {
+                    video.BluRayPlaylistNameIsValid = string.Equals(
+                        video.BluRayPlaylistName,
+                        blurayInfo.PlaylistName,
+                        StringComparison.OrdinalIgnoreCase);
+
+                    if (video.BluRayPlaylistNameIsValid == false)
+                    {
+                        video.BluRayDefaultPlaylistName = blurayInfo.PlaylistName;
+                    }
+                }
             }
 
             if (blurayInfo.Chapters is not null)
@@ -367,17 +390,18 @@ namespace MediaBrowser.Providers.MediaInfo
         }
 
         /// <summary>
-        /// Gets information about the longest playlist on a bdrom.
+        /// Gets information about the selected or longest playlist on a bdrom.
         /// </summary>
         /// <param name="path">The path.</param>
+        /// <param name="playlistName">The optional canonical playlist name.</param>
         /// <returns>VideoStream.</returns>
-        private BlurayDiscInfo? GetBDInfo(string path)
+        private BlurayDiscInfo? GetBDInfo(string path, string? playlistName)
         {
             ArgumentException.ThrowIfNullOrEmpty(path);
 
             try
             {
-                return _blurayExaminer.GetDiscInfo(path);
+                return _blurayExaminer.GetDiscInfo(path, playlistName);
             }
             catch (Exception ex)
             {

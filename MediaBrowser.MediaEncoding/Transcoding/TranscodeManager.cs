@@ -400,7 +400,7 @@ public sealed class TranscodeManager : ITranscodeManager, IDisposable
         {
             if (state.MediaSource.VideoType == VideoType.Dvd || state.MediaSource.VideoType == VideoType.BluRay)
             {
-                var concatPath = Path.Join(_appPaths.CachePath, "concat", state.MediaSource.Id + ".concat");
+                var concatPath = MediaEncodingPathHelper.GetConcatConfigPath(_appPaths.CachePath, state.MediaSource);
                 await _attachmentExtractor.ExtractAllAttachments(concatPath, state.MediaSource, cancellationTokenSource.Token).ConfigureAwait(false);
             }
             else

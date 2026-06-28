@@ -176,6 +176,7 @@ public class ChapterManager : IChapterManager
                             VideoType = video.VideoType,
                             IsoType = video.IsoType,
                             Protocol = video.PathProtocol ?? MediaProtocol.File,
+                            BluRayPlaylistName = video.EffectiveBluRayPlaylistName
                         };
 
                         _logger.LogInformation("Extracting chapter image for {Name} at {Path}", video.Name, inputPath);

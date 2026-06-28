@@ -1270,8 +1270,8 @@ namespace MediaBrowser.MediaEncoding.Encoder
         }
 
         /// <inheritdoc />
-        public IReadOnlyList<string> GetPrimaryPlaylistM2tsFiles(string path)
-            => _blurayExaminer.GetDiscInfo(path).Files;
+        public IReadOnlyList<string> GetPrimaryPlaylistM2tsFiles(string path, string playlistName)
+            => _blurayExaminer.GetDiscInfo(path, playlistName).Files;
 
         /// <inheritdoc />
         public string GetInputPathArgument(EncodingJobInfo state)
@@ -1283,7 +1283,7 @@ namespace MediaBrowser.MediaEncoding.Encoder
             return mediaSource.VideoType switch
             {
                 VideoType.Dvd => GetInputArgument(GetPrimaryPlaylistVobFiles(path, null), mediaSource),
-                VideoType.BluRay => GetInputArgument(GetPrimaryPlaylistM2tsFiles(path), mediaSource),
+                VideoType.BluRay => GetInputArgument(GetPrimaryPlaylistM2tsFiles(path, mediaSource.BluRayPlaylistName), mediaSource),
                 _ => GetInputArgument(path, mediaSource)
             };
         }
@@ -1300,7 +1300,7 @@ namespace MediaBrowser.MediaEncoding.Encoder
             }
             else if (videoType == VideoType.BluRay)
             {
-                files = GetPrimaryPlaylistM2tsFiles(source.Path);
+                files = GetPrimaryPlaylistM2tsFiles(source.Path, source.BluRayPlaylistName);
             }
             else
             {

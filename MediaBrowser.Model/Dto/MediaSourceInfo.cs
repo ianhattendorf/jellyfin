@@ -95,6 +95,8 @@ namespace MediaBrowser.Model.Dto
 
         public VideoType? VideoType { get; set; }
 
+        public string BluRayPlaylistName { get; set; }
+
         public IsoType? IsoType { get; set; }
 
         public Video3DFormat? Video3DFormat { get; set; }

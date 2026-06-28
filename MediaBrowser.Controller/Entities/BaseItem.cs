@@ -1133,8 +1133,8 @@ namespace MediaBrowser.Controller.Entities
         {
             ArgumentNullException.ThrowIfNull(item);
 
-            var protocol = item.PathProtocol;
             var itemPath = item.Path;
+            var protocol = item.PathProtocol;
 
             var info = new MediaSourceInfo
             {
@@ -1168,6 +1168,7 @@ namespace MediaBrowser.Controller.Entities
             {
                 info.IsoType = video.IsoType;
                 info.VideoType = video.VideoType;
+                info.BluRayPlaylistName = video.EffectiveBluRayPlaylistName;
                 info.Video3DFormat = video.Video3DFormat;
                 info.Timestamp = video.Timestamp;
 

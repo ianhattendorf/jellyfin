@@ -257,8 +257,9 @@ namespace MediaBrowser.Controller.MediaEncoding
         /// Gets the primary playlist of .m2ts files.
         /// </summary>
         /// <param name="path">The to the .m2ts files.</param>
+        /// <param name="playlistName">The optional canonical playlist name.</param>
         /// <returns>A playlist.</returns>
-        IReadOnlyList<string> GetPrimaryPlaylistM2tsFiles(string path);
+        IReadOnlyList<string> GetPrimaryPlaylistM2tsFiles(string path, string playlistName);
 
         /// <summary>
         /// Gets the input path argument from <see cref="EncodingJobInfo"/>.

@@ -1,9 +1,12 @@
 using System;
+using System.Collections.Generic;
 using AutoFixture;
 using AutoFixture.AutoMoq;
 using MediaBrowser.Controller.Configuration;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Model.Configuration;
+using MediaBrowser.Model.Entities;
+using MediaBrowser.Model.MediaInfo;
 using MediaBrowser.Providers.MediaInfo;
 using Moq;
 using Xunit;
@@ -74,5 +77,69 @@ public class FFProbeVideoInfoTests
         });
 
         Assert.All(chapters, chapter => Assert.True(chapter.StartPositionTicks < runtime));
+    }
+
+    [Fact]
+    public void FetchBdInfo_WithValidManualPlaylist_MarksSelectionValid()
+    {
+        var video = new Video
+        {
+            BluRayPlaylistName = "00801.mpls",
+            BluRayDefaultPlaylistName = "00800.mpls"
+        };
+        var chapters = Array.Empty<ChapterInfo>();
+        var streams = new List<MediaStream>();
+
+        _fFProbeVideoInfo.FetchBdInfo(
+            video,
+            ref chapters,
+            streams,
+            new BlurayDiscInfo { PlaylistName = "00801.MPLS" });
+
+        Assert.True(video.BluRayPlaylistNameIsValid);
+        Assert.Equal("00800.mpls", video.BluRayDefaultPlaylistName);
+    }
+
+    [Fact]
+    public void FetchBdInfo_WithInvalidManualPlaylist_MarksSelectionInvalidAndUpdatesDefault()
+    {
+        var video = new Video
+        {
+            BluRayPlaylistName = "00999.mpls",
+            BluRayDefaultPlaylistName = "00800.mpls"
+        };
+        var chapters = Array.Empty<ChapterInfo>();
+        var streams = new List<MediaStream>();
+
+        _fFProbeVideoInfo.FetchBdInfo(
+            video,
+            ref chapters,
+            streams,
+            new BlurayDiscInfo { PlaylistName = "00802.mpls" });
+
+        Assert.False(video.BluRayPlaylistNameIsValid);
+        Assert.Equal("00802.mpls", video.BluRayDefaultPlaylistName);
+        Assert.Equal("00802.mpls", video.EffectiveBluRayPlaylistName);
+    }
+
+    [Fact]
+    public void FetchBdInfo_WithoutManualPlaylist_ClearsValidityAndUpdatesDefault()
+    {
+        var video = new Video
+        {
+            BluRayPlaylistNameIsValid = false,
+            BluRayDefaultPlaylistName = "00800.mpls"
+        };
+        var chapters = Array.Empty<ChapterInfo>();
+        var streams = new List<MediaStream>();
+
+        _fFProbeVideoInfo.FetchBdInfo(
+            video,
+            ref chapters,
+            streams,
+            new BlurayDiscInfo { PlaylistName = "00803.mpls" });
+
+        Assert.Null(video.BluRayPlaylistNameIsValid);
+        Assert.Equal("00803.mpls", video.BluRayDefaultPlaylistName);
     }
 }

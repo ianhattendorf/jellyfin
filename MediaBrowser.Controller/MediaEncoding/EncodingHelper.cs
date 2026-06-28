@@ -1260,7 +1260,7 @@ namespace MediaBrowser.Controller.MediaEncoding
 
             if (state.MediaSource.VideoType == VideoType.Dvd || state.MediaSource.VideoType == VideoType.BluRay)
             {
-                var concatFilePath = Path.Join(_configurationManager.CommonApplicationPaths.CachePath, "concat", state.MediaSource.Id + ".concat");
+                var concatFilePath = MediaEncodingPathHelper.GetConcatConfigPath(_configurationManager.CommonApplicationPaths.CachePath, state.MediaSource);
                 if (!File.Exists(concatFilePath))
                 {
                     _mediaEncoder.GenerateConcatConfig(state.MediaSource, concatFilePath);

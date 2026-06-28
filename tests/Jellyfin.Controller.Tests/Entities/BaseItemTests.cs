@@ -2,8 +2,10 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using System.Text.Json;
 using System.Threading;
 using Jellyfin.Database.Implementations.Entities;
+using Jellyfin.Extensions.Json;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.LiveTv;
@@ -334,5 +336,106 @@ public class BaseItemTests
             Assert.Contains(alt1.Id, ids);
             Assert.Contains(alt2.Id, ids);
         }
+    }
+
+    [Fact]
+    public void GetMediaSources_WithBluRayDefaultPlaylist_UsesDefaultWhenNoManualSelectionExists()
+    {
+        var video = new Video
+        {
+            Id = Guid.NewGuid(),
+            Path = "/media/movie",
+            VideoType = VideoType.BluRay,
+            BluRayDefaultPlaylistName = "00800.mpls"
+        };
+        var mediaSourceManager = new Mock<IMediaSourceManager>();
+        mediaSourceManager.Setup(i => i.GetMediaStreams(video.Id)).Returns([]);
+        mediaSourceManager.Setup(i => i.GetMediaAttachments(video.Id)).Returns([]);
+        mediaSourceManager.Setup(i => i.GetPathProtocol(video.Path)).Returns(MediaProtocol.File);
+        var libraryManager = new Mock<ILibraryManager>();
+        libraryManager.Setup(i => i.GetLinkedAlternateVersions(video)).Returns([]);
+        libraryManager.Setup(i => i.GetLocalAlternateVersionIds(video)).Returns([]);
+        BaseItem.MediaSourceManager = mediaSourceManager.Object;
+        BaseItem.LibraryManager = libraryManager.Object;
+        BaseItem.MediaSegmentManager = Mock.Of<IMediaSegmentManager>(i => !i.IsTypeSupported(video));
+        Video.RecordingsManager = Mock.Of<IRecordingsManager>(i => i.GetActiveRecordingInfo(video.Path) == null);
+
+        var mediaSource = Assert.Single(video.GetMediaSources(false));
+
+        Assert.Equal("/media/movie", mediaSource.Path);
+        Assert.Equal("00800.mpls", mediaSource.BluRayPlaylistName);
+    }
+
+    [Fact]
+    public void GetMediaSources_WithBluRayManualPlaylist_PrefersManualSelectionOverDefault()
+    {
+        var video = new Video
+        {
+            Id = Guid.NewGuid(),
+            Path = "/media/movie",
+            VideoType = VideoType.BluRay,
+            BluRayPlaylistName = "00801.mpls",
+            BluRayDefaultPlaylistName = "00800.mpls"
+        };
+        var mediaSourceManager = new Mock<IMediaSourceManager>();
+        mediaSourceManager.Setup(i => i.GetMediaStreams(video.Id)).Returns([]);
+        mediaSourceManager.Setup(i => i.GetMediaAttachments(video.Id)).Returns([]);
+        mediaSourceManager.Setup(i => i.GetPathProtocol(video.Path)).Returns(MediaProtocol.File);
+        var libraryManager = new Mock<ILibraryManager>();
+        libraryManager.Setup(i => i.GetLinkedAlternateVersions(video)).Returns([]);
+        libraryManager.Setup(i => i.GetLocalAlternateVersionIds(video)).Returns([]);
+        BaseItem.MediaSourceManager = mediaSourceManager.Object;
+        BaseItem.LibraryManager = libraryManager.Object;
+        BaseItem.MediaSegmentManager = Mock.Of<IMediaSegmentManager>(i => !i.IsTypeSupported(video));
+        Video.RecordingsManager = Mock.Of<IRecordingsManager>(i => i.GetActiveRecordingInfo(video.Path) == null);
+
+        var mediaSource = Assert.Single(video.GetMediaSources(false));
+
+        Assert.Equal("00801.mpls", mediaSource.BluRayPlaylistName);
+    }
+
+    [Fact]
+    public void GetMediaSources_WithInvalidBluRayManualPlaylist_UsesDefaultPlaylist()
+    {
+        var video = new Video
+        {
+            Id = Guid.NewGuid(),
+            Path = "/media/movie",
+            VideoType = VideoType.BluRay,
+            BluRayPlaylistName = "00999.mpls",
+            BluRayPlaylistNameIsValid = false,
+            BluRayDefaultPlaylistName = "00800.mpls"
+        };
+        var mediaSourceManager = new Mock<IMediaSourceManager>();
+        mediaSourceManager.Setup(i => i.GetMediaStreams(video.Id)).Returns([]);
+        mediaSourceManager.Setup(i => i.GetMediaAttachments(video.Id)).Returns([]);
+        mediaSourceManager.Setup(i => i.GetPathProtocol(video.Path)).Returns(MediaProtocol.File);
+        var libraryManager = new Mock<ILibraryManager>();
+        libraryManager.Setup(i => i.GetLinkedAlternateVersions(video)).Returns([]);
+        libraryManager.Setup(i => i.GetLocalAlternateVersionIds(video)).Returns([]);
+        BaseItem.MediaSourceManager = mediaSourceManager.Object;
+        BaseItem.LibraryManager = libraryManager.Object;
+        BaseItem.MediaSegmentManager = Mock.Of<IMediaSegmentManager>(i => !i.IsTypeSupported(video));
+        Video.RecordingsManager = Mock.Of<IRecordingsManager>(i => i.GetActiveRecordingInfo(video.Path) == null);
+
+        var mediaSource = Assert.Single(video.GetMediaSources(false));
+
+        Assert.Equal("00800.mpls", mediaSource.BluRayPlaylistName);
+    }
+
+    [Fact]
+    public void VideoSerialization_DoesNotPersistEffectiveBluRayPlaylistName()
+    {
+        var video = new Video
+        {
+            BluRayPlaylistName = "00801.mpls",
+            BluRayPlaylistNameIsValid = true,
+            BluRayDefaultPlaylistName = "00800.mpls"
+        };
+
+        var json = JsonSerializer.Serialize(video, JsonDefaults.Options);
+
+        Assert.Contains("\"BluRayPlaylistName\":\"00801.mpls\"", json, StringComparison.Ordinal);
+        Assert.DoesNotContain("EffectiveBluRayPlaylistName", json, StringComparison.Ordinal);
     }
 }
