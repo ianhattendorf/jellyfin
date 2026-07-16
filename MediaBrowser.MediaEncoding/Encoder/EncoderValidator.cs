@@ -296,6 +296,55 @@ namespace MediaBrowser.MediaEncoding.Encoder
 
         public IEnumerable<string> GetHwaccels() => GetHwaccelTypes();
 
+        public IEnumerable<string> GetInputProtocols()
+        {
+            string output;
+            try
+            {
+                output = GetProcessOutput(_encoderPath, "-hide_banner -protocols", false, null);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error detecting available input protocols");
+                return [];
+            }
+
+            var protocols = ParseInputProtocols(output);
+            _logger.LogInformation("Available input protocols: {Protocols}", protocols);
+            return protocols;
+        }
+
+        internal static IReadOnlyList<string> ParseInputProtocols(string output)
+        {
+            if (string.IsNullOrWhiteSpace(output))
+            {
+                return [];
+            }
+
+            var inputProtocols = new List<string>();
+            var readingInputProtocols = false;
+            foreach (var line in output.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                if (string.Equals(line, "Input:", StringComparison.Ordinal))
+                {
+                    readingInputProtocols = true;
+                    continue;
+                }
+
+                if (string.Equals(line, "Output:", StringComparison.Ordinal))
+                {
+                    break;
+                }
+
+                if (readingInputProtocols)
+                {
+                    inputProtocols.Add(line);
+                }
+            }
+
+            return inputProtocols.Distinct(StringComparer.Ordinal).ToArray();
+        }
+
         public IEnumerable<string> GetFilters() => GetFFmpegFilters();
 
         public IDictionary<FilterOptionType, bool> GetFiltersWithOption() => _filterOptionsDict

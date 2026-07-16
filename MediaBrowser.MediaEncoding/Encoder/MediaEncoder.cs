@@ -54,8 +54,8 @@ namespace MediaBrowser.MediaEncoding.Encoder
         private readonly ILogger<MediaEncoder> _logger;
         private readonly IServerConfigurationManager _configurationManager;
         private readonly IFileSystem _fileSystem;
-        private readonly ILocalizationManager _localization;
         private readonly IBlurayExaminer _blurayExaminer;
+        private readonly ILocalizationManager _localization;
         private readonly IConfiguration _config;
         private readonly IServerConfigurationManager _serverConfig;
         private readonly string _startupOptionFFmpegPath;
@@ -71,6 +71,7 @@ namespace MediaBrowser.MediaEncoding.Encoder
         private List<string> _encoders = new List<string>();
         private List<string> _decoders = new List<string>();
         private List<string> _hwaccels = new List<string>();
+        private HashSet<string> _inputProtocols = new(StringComparer.Ordinal);
         private List<string> _filters = new List<string>();
         private IDictionary<FilterOptionType, bool> _filtersWithOption = new Dictionary<FilterOptionType, bool>();
         private IDictionary<BitStreamFilterOptionType, bool> _bitStreamFiltersWithOption = new Dictionary<BitStreamFilterOptionType, bool>();
@@ -228,6 +229,7 @@ namespace MediaBrowser.MediaEncoding.Encoder
                 SetAvailableFiltersWithOption(validator.GetFiltersWithOption());
                 SetAvailableBitStreamFiltersWithOption(validator.GetBitStreamFiltersWithOption());
                 SetAvailableHwaccels(validator.GetHwaccels());
+                SetAvailableInputProtocols(validator.GetInputProtocols());
                 SetMediaEncoderVersion(validator);
 
                 _threads = EncodingHelper.GetNumberOfThreads(null, options, null);
@@ -338,6 +340,11 @@ namespace MediaBrowser.MediaEncoding.Encoder
             _hwaccels = list.ToList();
         }
 
+        internal void SetAvailableInputProtocols(IEnumerable<string> list)
+        {
+            _inputProtocols = list.ToHashSet(StringComparer.Ordinal);
+        }
+
         public void SetAvailableFilters(IEnumerable<string> list)
         {
             _filters = list.ToList();
@@ -420,7 +427,7 @@ namespace MediaBrowser.MediaEncoding.Encoder
             var extraArgs = GetExtraArguments(request);
 
             return GetMediaInfoInternal(
-                GetInputArgument(request.MediaSource.Path, request.MediaSource),
+                GetMediaInfoInputArgument(request),
                 request.MediaSource.Path,
                 request.MediaSource.Protocol,
                 extractChapters,
@@ -428,6 +435,13 @@ namespace MediaBrowser.MediaEncoding.Encoder
                 request.MediaType == DlnaProfileType.Audio,
                 request.MediaSource.VideoType,
                 cancellationToken);
+        }
+
+        internal string GetMediaInfoInputArgument(MediaInfoRequest request)
+        {
+            return request.MediaSource.VideoType == VideoType.BluRay
+                ? GetInputPathArgument(request.MediaSource.Path, request.MediaSource)
+                : GetInputArgument(request.MediaSource.Path, request.MediaSource);
         }
 
         internal string GetExtraArguments(MediaInfoRequest request)
@@ -466,6 +480,12 @@ namespace MediaBrowser.MediaEncoding.Encoder
                 extraArgs += " -rtsp_transport tcp+udp -rtsp_flags prefer_tcp";
             }
 
+            var inputOptions = GetInputOptions(request.MediaSource);
+            if (!string.IsNullOrEmpty(inputOptions))
+            {
+                extraArgs += " " + inputOptions;
+            }
+
             return extraArgs;
         }
 
@@ -485,6 +505,20 @@ namespace MediaBrowser.MediaEncoding.Encoder
             }
 
             return EncodingUtils.GetInputArgument(prefix, new[] { inputFile }, mediaSource.Protocol);
+        }
+
+        /// <inheritdoc />
+        public string GetInputOptions(MediaSourceInfo mediaSource)
+        {
+            ArgumentNullException.ThrowIfNull(mediaSource);
+
+            if (mediaSource.VideoType != VideoType.BluRay)
+            {
+                return string.Empty;
+            }
+
+            EnsureSupportedBluRayPlan(mediaSource);
+            return "-f concat -safe 0";
         }
 
         /// <inheritdoc />
@@ -626,12 +660,13 @@ namespace MediaBrowser.MediaEncoding.Encoder
             CancellationToken cancellationToken)
         {
             var inputArgument = GetInputPathArgument(inputFile, mediaSource);
+            var inputOptions = GetInputOptions(mediaSource);
 
             if (!isAudio)
             {
                 try
                 {
-                    return await ExtractImageInternal(inputArgument, container, videoStream, imageStreamIndex, threedFormat, offset, true, targetFormat, false, cancellationToken).ConfigureAwait(false);
+                    return await ExtractImageInternal(inputArgument, inputOptions, container, videoStream, imageStreamIndex, threedFormat, offset, true, targetFormat, false, cancellationToken).ConfigureAwait(false);
                 }
                 catch (ArgumentException)
                 {
@@ -643,7 +678,7 @@ namespace MediaBrowser.MediaEncoding.Encoder
                 }
             }
 
-            return await ExtractImageInternal(inputArgument, container, videoStream, imageStreamIndex, threedFormat, offset, false, targetFormat, isAudio, cancellationToken).ConfigureAwait(false);
+            return await ExtractImageInternal(inputArgument, inputOptions, container, videoStream, imageStreamIndex, threedFormat, offset, false, targetFormat, isAudio, cancellationToken).ConfigureAwait(false);
         }
 
         private string GetImageResolutionParameter()
@@ -671,6 +706,7 @@ namespace MediaBrowser.MediaEncoding.Encoder
 
         private async Task<string> ExtractImageInternal(
             string inputPath,
+            string inputOptions,
             string container,
             MediaStream videoStream,
             int? imageStreamIndex,
@@ -747,7 +783,8 @@ namespace MediaBrowser.MediaEncoding.Encoder
             var mapArg = imageStreamIndex.HasValue ? (" -map 0:" + imageStreamIndex.Value.ToString(CultureInfo.InvariantCulture)) : string.Empty;
             var args = string.Format(
                 CultureInfo.InvariantCulture,
-                "-i {0}{1} -threads {2} -v quiet -vframes 1 -vf {3}{4}{5} -f image2 \"{6}\"",
+                "{0} -i {1}{2} -threads {3} -v quiet -vframes 1 -vf {4}{5}{6} -f image2 \"{7}\"",
+                inputOptions,
                 inputPath,
                 mapArg,
                 _threads,
@@ -1235,6 +1272,12 @@ namespace MediaBrowser.MediaEncoding.Encoder
                 .OrderBy(i => i.FullName)
                 .ToList();
 
+            if (allVobs.Count == 0)
+            {
+                _logger.LogWarning("Could not find any playable .vob files in {Path}.", path);
+                return [];
+            }
+
             if (titleNumber.HasValue)
             {
                 var prefix = string.Format(CultureInfo.InvariantCulture, "VTS_{0:D2}_", titleNumber.Value);
@@ -1270,12 +1313,18 @@ namespace MediaBrowser.MediaEncoding.Encoder
         }
 
         /// <inheritdoc />
+        public IReadOnlyList<string> GetPrimaryPlaylistM2tsFiles(string path)
+            => GetPrimaryPlaylistM2tsFiles(path, null);
+
+        /// <inheritdoc />
         public IReadOnlyList<string> GetPrimaryPlaylistM2tsFiles(string path, string playlistName)
             => _blurayExaminer.GetDiscInfo(path, playlistName).Files;
 
         /// <inheritdoc />
         public string GetInputPathArgument(EncodingJobInfo state)
-            => GetInputPathArgument(state.MediaPath, state.MediaSource);
+            => state.MediaSource.VideoType == VideoType.BluRay
+                ? GetBluRayInputPathArgument(state.MediaPath, state.MediaSource, state.BaseRequest.StartTimeTicks)
+                : GetInputPathArgument(state.MediaPath, state.MediaSource);
 
         /// <inheritdoc />
         public string GetInputPathArgument(string path, MediaSourceInfo mediaSource)
@@ -1283,29 +1332,42 @@ namespace MediaBrowser.MediaEncoding.Encoder
             return mediaSource.VideoType switch
             {
                 VideoType.Dvd => GetInputArgument(GetPrimaryPlaylistVobFiles(path, null), mediaSource),
-                VideoType.BluRay => GetInputArgument(GetPrimaryPlaylistM2tsFiles(path, mediaSource.BluRayPlaylistName), mediaSource),
+                VideoType.BluRay => GetBluRayInputPathArgument(path, mediaSource, null),
                 _ => GetInputArgument(path, mediaSource)
             };
+        }
+
+        private string GetBluRayInputPathArgument(string path, MediaSourceInfo mediaSource, long? startTimeTicks)
+        {
+            EnsureSupportedBluRayPlan(mediaSource);
+            var concatPath = MediaEncodingPathHelper.GetBluRayConcatConfigPath(
+                _configurationManager.CommonApplicationPaths.CachePath,
+                mediaSource,
+                startTimeTicks);
+            if (!File.Exists(concatPath))
+            {
+                GenerateBluRayConcatConfig(mediaSource, concatPath, startTimeTicks);
+            }
+
+            return EncodingUtils.GetInputArgument("file", concatPath, MediaProtocol.File);
         }
 
         /// <inheritdoc />
         public void GenerateConcatConfig(MediaSourceInfo source, string concatFilePath)
         {
-            // Get all playable files
-            IReadOnlyList<string> files;
             var videoType = source.VideoType;
-            if (videoType == VideoType.Dvd)
+            if (videoType == VideoType.BluRay)
             {
-                files = GetPrimaryPlaylistVobFiles(source.Path, null);
+                GenerateBluRayConcatConfig(source, concatFilePath);
+                return;
             }
-            else if (videoType == VideoType.BluRay)
-            {
-                files = GetPrimaryPlaylistM2tsFiles(source.Path, source.BluRayPlaylistName);
-            }
-            else
+
+            if (videoType != VideoType.Dvd)
             {
                 return;
             }
+
+            var files = GetPrimaryPlaylistVobFiles(source.Path, null);
 
             // Generate concat configuration entries for each file and write to file
             Directory.CreateDirectory(Path.GetDirectoryName(concatFilePath));
@@ -1320,7 +1382,7 @@ namespace MediaBrowser.MediaEncoding.Encoder
                         {
                             Path = path,
                             Protocol = MediaProtocol.File,
-                            VideoType = videoType
+                            VideoType = VideoType.VideoFile
                         }
                     },
                     CancellationToken.None).GetAwaiter().GetResult();
@@ -1334,6 +1396,127 @@ namespace MediaBrowser.MediaEncoding.Encoder
                 sw.WriteLine("duration {0}", duration);
             }
         }
+
+        private void GenerateBluRayConcatConfig(MediaSourceInfo source, string concatFilePath)
+            => GenerateBluRayConcatConfig(source, concatFilePath, null);
+
+        private void GenerateBluRayConcatConfig(
+            MediaSourceInfo source,
+            string concatFilePath,
+            long? startTimeTicks)
+        {
+            var plan = EnsureSupportedBluRayPlan(source);
+            if (File.Exists(concatFilePath))
+            {
+                return;
+            }
+
+            var root = MediaEncodingPathHelper.NormalizeBluRayPath(source.Path);
+            var streamRoot = Path.GetFullPath(Path.Combine(root, "BDMV", "STREAM"));
+            Directory.CreateDirectory(Path.GetDirectoryName(concatFilePath)!);
+            var temporaryPath = concatFilePath + "." + Guid.NewGuid().ToString("N", CultureInfo.InvariantCulture) + ".tmp";
+
+            try
+            {
+                using (var writer = new FormattingStreamWriter(temporaryPath, CultureInfo.InvariantCulture))
+                {
+                    writer.WriteLine("ffconcat version 1.0");
+                    foreach (var stream in plan.Streams.OrderBy(i => i.Index))
+                    {
+                        writer.WriteLine("stream");
+                        writer.WriteLine("exact_stream_id 0x{0:X}", stream.Pid);
+                        writer.WriteLine("stream_codec {0}", stream.Codec);
+                    }
+
+                    var firstItemIndex = 0;
+                    var firstItemInTime45Khz = plan.PlayItems[0].InTime45Khz;
+                    if (startTimeTicks > 0)
+                    {
+                        var wholeSeconds = startTimeTicks.Value / TimeSpan.TicksPerSecond;
+                        var remainingTicks = startTimeTicks.Value % TimeSpan.TicksPerSecond;
+                        var seekTime45Khz = checked(
+                            (wholeSeconds * 45_000)
+                            + (remainingTicks * 45_000 / TimeSpan.TicksPerSecond));
+                        if (plan.Duration45Khz > 0)
+                        {
+                            seekTime45Khz = Math.Min(seekTime45Khz, plan.Duration45Khz - 1);
+                        }
+
+                        firstItemIndex = Array.FindIndex(
+                            plan.PlayItems,
+                            item => seekTime45Khz < item.TimelineStart45Khz + item.OutTime45Khz - item.InTime45Khz);
+                        if (firstItemIndex < 0)
+                        {
+                            firstItemIndex = plan.PlayItems.Length - 1;
+                        }
+
+                        var firstItem = plan.PlayItems[firstItemIndex];
+                        var itemOffset45Khz = Math.Max(seekTime45Khz - firstItem.TimelineStart45Khz, 0);
+                        firstItemInTime45Khz = Math.Min(
+                            firstItem.InTime45Khz + itemOffset45Khz,
+                            firstItem.OutTime45Khz - 1);
+                    }
+
+                    for (var itemIndex = firstItemIndex; itemIndex < plan.PlayItems.Length; itemIndex++)
+                    {
+                        var item = plan.PlayItems[itemIndex];
+                        var inTime45Khz = itemIndex == firstItemIndex
+                            ? firstItemInTime45Khz
+                            : item.InTime45Khz;
+                        var clipPath = Path.GetFullPath(Path.Combine(streamRoot, item.ClipFileName!));
+                        var relativePath = Path.GetRelativePath(streamRoot, clipPath);
+                        if (Path.IsPathFullyQualified(relativePath)
+                            || relativePath.StartsWith("..", StringComparison.Ordinal)
+                            || !string.Equals(relativePath, Path.GetFileName(relativePath), StringComparison.Ordinal)
+                            || !File.Exists(clipPath))
+                        {
+                            throw new FfmpegException($"Blu-ray playback plan clip '{item.ClipFileName}' is outside BDMV/STREAM or is missing.");
+                        }
+
+                        writer.WriteLine("file '{0}'", clipPath.Replace("'", @"'\''", StringComparison.Ordinal));
+                        writer.WriteLine("inpoint {0}", FormatMplsTime(inTime45Khz));
+                        writer.WriteLine("outpoint {0}", FormatMplsTime(item.OutTime45Khz));
+                        writer.WriteLine("duration {0}", FormatMplsTime(item.OutTime45Khz - inTime45Khz));
+                    }
+                }
+
+                try
+                {
+                    File.Move(temporaryPath, concatFilePath);
+                }
+                catch (IOException) when (File.Exists(concatFilePath))
+                {
+                    // A concurrent request created the same immutable manifest.
+                }
+            }
+            finally
+            {
+                if (File.Exists(temporaryPath))
+                {
+                    File.Delete(temporaryPath);
+                }
+            }
+        }
+
+        private static BluRayPlaybackPlan EnsureSupportedBluRayPlan(MediaSourceInfo mediaSource)
+        {
+            var plan = mediaSource.BluRayPlaybackPlan;
+            if (plan is null)
+            {
+                throw new FfmpegException("The Blu-ray media source has not been prepared with a selected-playlist playback plan.");
+            }
+
+            if (!plan.IsSupported)
+            {
+                throw new FfmpegException(
+                    $"Blu-ray playlist '{plan.PlaylistName}' cannot be played: {plan.FailureMessage ?? plan.FailureReason.ToString()}");
+            }
+
+            return plan;
+        }
+
+        private static string FormatMplsTime(long value)
+            => ((decimal)value / 45000m).ToString("0.#########", CultureInfo.InvariantCulture);
 
         public bool CanExtractSubtitles(string codec)
         {

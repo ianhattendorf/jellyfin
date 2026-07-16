@@ -1169,6 +1169,7 @@ namespace MediaBrowser.Controller.Entities
                 info.IsoType = video.IsoType;
                 info.VideoType = video.VideoType;
                 info.BluRayPlaylistName = video.EffectiveBluRayPlaylistName;
+                info.BluRayPlaybackPlan = video.BluRayPlaybackPlan;
                 info.Video3DFormat = video.Video3DFormat;
                 info.Timestamp = video.Timestamp;
 

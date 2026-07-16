@@ -171,7 +171,10 @@ public sealed class VideosControllerTests : IClassFixture<JellyfinApplicationFac
 
     private sealed class TestBlurayExaminer : IBlurayExaminer
     {
-        public BlurayDiscInfo GetDiscInfo(string path, string? playlistName = null)
+        public BlurayDiscInfo GetDiscInfo(string path)
+            => GetDiscInfo(path, null);
+
+        public BlurayDiscInfo GetDiscInfo(string path, string? playlistName)
         {
             return new BlurayDiscInfo
             {

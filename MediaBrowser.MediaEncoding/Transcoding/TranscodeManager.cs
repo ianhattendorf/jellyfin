@@ -398,7 +398,7 @@ public sealed class TranscodeManager : ITranscodeManager, IDisposable
         // If subtitles get burned in fonts may need to be extracted from the media file
         if (state.SubtitleStream is not null && (state.SubtitleDeliveryMethod == SubtitleDeliveryMethod.Encode || state.BaseRequest.AlwaysBurnInSubtitleWhenTranscoding))
         {
-            if (state.MediaSource.VideoType == VideoType.Dvd || state.MediaSource.VideoType == VideoType.BluRay)
+            if (state.MediaSource.VideoType == VideoType.Dvd)
             {
                 var concatPath = MediaEncodingPathHelper.GetConcatConfigPath(_appPaths.CachePath, state.MediaSource);
                 await _attachmentExtractor.ExtractAllAttachments(concatPath, state.MediaSource, cancellationTokenSource.Token).ConfigureAwait(false);
@@ -410,7 +410,10 @@ public sealed class TranscodeManager : ITranscodeManager, IDisposable
 
             if (state.SubtitleStream.IsExternal && Path.GetExtension(state.SubtitleStream.Path.AsSpan()).Equals(".mks", StringComparison.OrdinalIgnoreCase))
             {
-                await _attachmentExtractor.ExtractAllAttachments(state.SubtitleStream.Path, state.MediaSource, cancellationTokenSource.Token).ConfigureAwait(false);
+                await _attachmentExtractor.ExtractAllAttachmentsFromExternalFile(
+                    state.SubtitleStream.Path,
+                    state.MediaSource,
+                    cancellationTokenSource.Token).ConfigureAwait(false);
             }
         }
 

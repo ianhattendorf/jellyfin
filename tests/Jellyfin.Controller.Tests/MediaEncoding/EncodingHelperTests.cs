@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using Jellyfin.Data.Enums;
 using MediaBrowser.Common.Configuration;
@@ -223,6 +224,87 @@ public class EncodingHelperTests
         Assert.Contains("-ar " + expectedSampleRate, args, StringComparison.Ordinal);
     }
 
+    [Theory]
+    [InlineData(true, true, true, true)]
+    [InlineData(false, true, false, true)]
+    [InlineData(true, false, true, false)]
+    [InlineData(false, false, false, false)]
+    public void GetInputModifier_ControlsSeekAndReadrateIndependently(
+        bool includeSeek,
+        bool allowReadrateLimit,
+        bool expectedSeek,
+        bool expectedReadrate)
+    {
+        var state = BuildState(subtitle: null, deliveryMethod: null, transcodingJobType: TranscodingJobType.Hls);
+        state.BaseRequest.StartTimeTicks = TimeSpan.FromMinutes(5).Ticks;
+        state.RunTimeTicks = TimeSpan.FromHours(1).Ticks;
+        state.OutputVideoCodec = "copy";
+
+        var options = new EncodingOptions { EnableSegmentDeletion = true };
+        var args = CreateHelper().GetInputModifier(state, options, "ts", includeSeek, allowReadrateLimit);
+
+        Assert.Equal(expectedSeek, args.Contains("-ss 00:05:00.500", StringComparison.Ordinal));
+        Assert.Equal(expectedReadrate, args.Contains("-readrate 10", StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData(null, "")]
+    [InlineData(0L, "")]
+    [InlineData(3000000000L, "output_ts_offset=300")]
+    [InlineData(3005000000L, "output_ts_offset=300.5")]
+    public void GetHlsSegmentTimestampOffsetOption_UsesUnadjustedStartTime(
+        long? startTimeTicks,
+        string expected)
+    {
+        var state = BuildState(subtitle: null, deliveryMethod: null);
+        state.BaseRequest.StartTimeTicks = startTimeTicks;
+
+        var args = CreateHelper().GetHlsSegmentTimestampOffsetOption(state);
+
+        Assert.Equal(expected, args);
+    }
+
+    [Fact]
+    public void GetFastSeekCommandLineParameter_WithPreparedBluRaySeek_UsesSeekManifest()
+    {
+        var state = BuildState(subtitle: null, deliveryMethod: null);
+        state.BaseRequest.StartTimeTicks = TimeSpan.FromSeconds(900).Ticks;
+        state.MediaSource.VideoType = VideoType.BluRay;
+        state.MediaSource.BluRayPlaybackPlan = new BluRayPlaybackPlan
+        {
+            PlaylistName = "00150.mpls",
+            Streams = [new BluRayPlaybackStream { Index = 0, Type = MediaStreamType.Video, Codec = "h264" }],
+            PlayItems = [new BluRayPlaybackItem { ClipFileName = "00001.m2ts", OutTime45Khz = 45_000 }]
+        };
+
+        var args = CreateHelper().GetFastSeekCommandLineParameter(state, new EncodingOptions(), "mp4");
+
+        Assert.Empty(args);
+    }
+
+    [Theory]
+    [InlineData(VideoType.BluRay, null, 128_000_000, true)]
+    [InlineData(VideoType.BluRay, null, 127_999_999, false)]
+    [InlineData(VideoType.VideoFile, null, int.MaxValue, false)]
+    [InlineData(VideoType.BluRay, 100_000_000, 128_000_000, true)]
+    [InlineData(VideoType.BluRay, 129_000_000, 128_000_000, false)]
+    public void CanStreamCopyVideo_UnknownBluRayBitrate_UsesFormatMaximum(
+        VideoType videoType,
+        int? sourceBitrate,
+        int requestedBitrate,
+        bool expected)
+    {
+        var state = BuildState(subtitle: null, deliveryMethod: null);
+        state.MediaSource.VideoType = videoType;
+        state.VideoStream!.Codec = "hevc";
+        state.VideoStream.BitRate = sourceBitrate;
+        state.BaseRequest.AllowVideoStreamCopy = true;
+        state.BaseRequest.VideoCodec = "hevc";
+        state.BaseRequest.VideoBitRate = requestedBitrate;
+
+        Assert.Equal(expected, CreateHelper().CanStreamCopyVideo(state, state.VideoStream));
+    }
+
     private static EncodingJobInfo BuildAudioState(string audioCodec, int requestedSampleRate)
     {
         var audio = new MediaStream { Index = 0, Type = MediaStreamType.Audio, Codec = "flac", SampleRate = 96000 };
@@ -251,7 +333,8 @@ public class EncodingHelperTests
     private static EncodingJobInfo BuildState(
         MediaStream? subtitle,
         SubtitleDeliveryMethod? deliveryMethod,
-        MediaStream[]? additionalStreams = null)
+        MediaStream[]? additionalStreams = null,
+        TranscodingJobType transcodingJobType = TranscodingJobType.Progressive)
     {
         var video = new MediaStream { Index = 0, Type = MediaStreamType.Video, Codec = "h264" };
         var audio = new MediaStream { Index = 1, Type = MediaStreamType.Audio, Codec = "aac" };
@@ -266,7 +349,7 @@ public class EncodingHelperTests
             streams.Add(subtitle);
         }
 
-        return new EncodingJobInfo(TranscodingJobType.Progressive)
+        return new EncodingJobInfo(transcodingJobType)
         {
             MediaSource = new MediaSourceInfo
             {
@@ -287,6 +370,9 @@ public class EncodingHelperTests
     {
         var appPaths = Mock.Of<IApplicationPaths>();
         var mediaEncoder = new Mock<IMediaEncoder>();
+        mediaEncoder.SetupGet(i => i.EncoderVersion).Returns(new Version(8, 1));
+        mediaEncoder.Setup(i => i.GetTimeParameter(It.IsAny<long>())).Returns<long>(
+            ticks => TimeSpan.FromTicks(ticks).ToString(@"hh\:mm\:ss\.fff", CultureInfo.InvariantCulture));
         var subtitleEncoder = new Mock<ISubtitleEncoder>();
         var config = new Mock<IConfiguration>();
         var configurationManager = new Mock<IConfigurationManager>();

@@ -339,14 +339,13 @@ public class BaseItemTests
     }
 
     [Fact]
-    public void GetMediaSources_WithBluRayDefaultPlaylist_UsesDefaultWhenNoManualSelectionExists()
+    public void GetMediaSources_WithoutBluRayManualPlaylist_LeavesPlaylistNull()
     {
         var video = new Video
         {
             Id = Guid.NewGuid(),
             Path = "/media/movie",
-            VideoType = VideoType.BluRay,
-            BluRayDefaultPlaylistName = "00800.mpls"
+            VideoType = VideoType.BluRay
         };
         var mediaSourceManager = new Mock<IMediaSourceManager>();
         mediaSourceManager.Setup(i => i.GetMediaStreams(video.Id)).Returns([]);
@@ -363,19 +362,29 @@ public class BaseItemTests
         var mediaSource = Assert.Single(video.GetMediaSources(false));
 
         Assert.Equal("/media/movie", mediaSource.Path);
-        Assert.Equal("00800.mpls", mediaSource.BluRayPlaylistName);
+        Assert.Null(mediaSource.BluRayPlaylistName);
     }
 
     [Fact]
-    public void GetMediaSources_WithBluRayManualPlaylist_PrefersManualSelectionOverDefault()
+    public void GetMediaSources_WithBluRayManualPlaylist_UsesManualSelection()
     {
+        var playbackPlan = new BluRayPlaybackPlan
+        {
+            PlaylistName = "00801.mpls",
+            Streams = [new BluRayPlaybackStream { Index = 0, Pid = 0x1011, Type = MediaStreamType.Video, Codec = "h264", FirstPlayItemStart45Khz = 0 }],
+            PlayItems = [new BluRayPlaybackItem { ClipFileName = "00001.m2ts", OutTime45Khz = 90_000 }]
+        };
+        playbackPlan.UpdatePlanHash();
         var video = new Video
         {
             Id = Guid.NewGuid(),
             Path = "/media/movie",
             VideoType = VideoType.BluRay,
             BluRayPlaylistName = "00801.mpls",
-            BluRayDefaultPlaylistName = "00800.mpls"
+            BluRayPlaylistNameIsValid = true,
+            BluRayLastProbedPlaylistName = "00801.mpls",
+            BluRayPlaylistProbeVersion = Video.CurrentBluRayPlaylistProbeVersion,
+            BluRayPlaybackPlan = playbackPlan
         };
         var mediaSourceManager = new Mock<IMediaSourceManager>();
         mediaSourceManager.Setup(i => i.GetMediaStreams(video.Id)).Returns([]);
@@ -392,10 +401,11 @@ public class BaseItemTests
         var mediaSource = Assert.Single(video.GetMediaSources(false));
 
         Assert.Equal("00801.mpls", mediaSource.BluRayPlaylistName);
+        Assert.Same(playbackPlan, mediaSource.BluRayPlaybackPlan);
     }
 
     [Fact]
-    public void GetMediaSources_WithInvalidBluRayManualPlaylist_UsesDefaultPlaylist()
+    public void GetMediaSources_WithInvalidBluRayManualPlaylist_LeavesPlaylistNull()
     {
         var video = new Video
         {
@@ -403,8 +413,7 @@ public class BaseItemTests
             Path = "/media/movie",
             VideoType = VideoType.BluRay,
             BluRayPlaylistName = "00999.mpls",
-            BluRayPlaylistNameIsValid = false,
-            BluRayDefaultPlaylistName = "00800.mpls"
+            BluRayPlaylistNameIsValid = false
         };
         var mediaSourceManager = new Mock<IMediaSourceManager>();
         mediaSourceManager.Setup(i => i.GetMediaStreams(video.Id)).Returns([]);
@@ -420,7 +429,7 @@ public class BaseItemTests
 
         var mediaSource = Assert.Single(video.GetMediaSources(false));
 
-        Assert.Equal("00800.mpls", mediaSource.BluRayPlaylistName);
+        Assert.Null(mediaSource.BluRayPlaylistName);
     }
 
     [Fact]
@@ -431,13 +440,61 @@ public class BaseItemTests
             BluRayPlaylistName = "00801.mpls",
             BluRayPlaylistNameIsValid = true,
             BluRayLastProbedPlaylistName = "00801.mpls",
-            BluRayDefaultPlaylistName = "00800.mpls"
+            BluRayPlaylistProbeVersion = Video.CurrentBluRayPlaylistProbeVersion
         };
 
         var json = JsonSerializer.Serialize(video, JsonDefaults.Options);
 
         Assert.Contains("\"BluRayPlaylistName\":\"00801.mpls\"", json, StringComparison.Ordinal);
         Assert.Contains("\"BluRayLastProbedPlaylistName\":\"00801.mpls\"", json, StringComparison.Ordinal);
+        Assert.DoesNotContain("BluRayDefaultPlaylistName", json, StringComparison.Ordinal);
         Assert.DoesNotContain("EffectiveBluRayPlaylistName", json, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void VideoSerialization_PreservesBluRayPlaybackPlanRawTimeline()
+    {
+        var plan = new BluRayPlaybackPlan
+        {
+            PlaylistName = "00150.mpls",
+            PlaylistRevision = 3,
+            DiscFingerprint = "disc",
+            Duration45Khz = 90_007,
+            Streams =
+            [
+                new BluRayPlaybackStream
+                {
+                    Index = 0,
+                    Pid = 0x1011,
+                    Type = MediaStreamType.Video,
+                    Codec = "h264",
+                    Signature = "AVC",
+                    FirstPlayItemStart45Khz = 0
+                }
+            ],
+            PlayItems =
+            [
+                new BluRayPlaybackItem
+                {
+                    ClipFileName = "00190.m2ts",
+                    InTime45Khz = 45_001,
+                    OutTime45Khz = 135_008,
+                    TimelineStart45Khz = 0,
+                    ConnectionCondition = 5,
+                    StcId = 1
+                }
+            ]
+        };
+        plan.UpdatePlanHash();
+
+        var json = JsonSerializer.Serialize(new Video { BluRayPlaybackPlan = plan }, JsonDefaults.Options);
+        var restored = JsonSerializer.Deserialize<Video>(json, JsonDefaults.Options);
+
+        Assert.NotNull(restored?.BluRayPlaybackPlan);
+        Assert.Equal(plan.PlanHash, restored.BluRayPlaybackPlan.PlanHash);
+        Assert.Equal(90_007, restored.BluRayPlaybackPlan.Duration45Khz);
+        var item = Assert.Single(restored.BluRayPlaybackPlan.PlayItems);
+        Assert.Equal(45_001, item.InTime45Khz);
+        Assert.Equal(135_008, item.OutTime45Khz);
     }
 }

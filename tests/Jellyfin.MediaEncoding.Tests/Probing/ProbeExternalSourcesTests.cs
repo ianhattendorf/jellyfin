@@ -46,5 +46,33 @@ namespace Jellyfin.MediaEncoding.Tests.Probing
 
             Assert.Contains($"-user_agent \"{userAgent}\"", extraArg, StringComparison.InvariantCulture);
         }
+
+        [Fact]
+        public void GetExtraArguments_Forwards_BluRayPlaylist()
+        {
+            var encoder = new MediaEncoder(
+                Mock.Of<ILogger<MediaEncoder>>(),
+                Mock.Of<IServerConfigurationManager>(),
+                Mock.Of<IFileSystem>(),
+                Mock.Of<IBlurayExaminer>(),
+                Mock.Of<ILocalizationManager>(),
+                new ConfigurationBuilder().Build(),
+                Mock.Of<IServerConfigurationManager>());
+            var req = new MediaBrowser.Controller.MediaEncoding.MediaInfoRequest()
+            {
+                MediaSource = new MediaBrowser.Model.Dto.MediaSourceInfo
+                {
+                    Path = "/media/movie/BDMV",
+                    Protocol = MediaProtocol.File,
+                    VideoType = MediaBrowser.Model.Entities.VideoType.BluRay,
+                    BluRayPlaylistName = "00800.mpls"
+                },
+                MediaType = MediaBrowser.Model.Dlna.DlnaProfileType.Video,
+            };
+
+            var extraArg = encoder.GetExtraArguments(req);
+
+            Assert.Contains("-playlist 800", extraArg, StringComparison.Ordinal);
+        }
     }
 }

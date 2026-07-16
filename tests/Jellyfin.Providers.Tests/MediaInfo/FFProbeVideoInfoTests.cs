@@ -84,8 +84,7 @@ public class FFProbeVideoInfoTests
     {
         var video = new Video
         {
-            BluRayPlaylistName = "00801.mpls",
-            BluRayDefaultPlaylistName = "00800.mpls"
+            BluRayPlaylistName = "00801.mpls"
         };
         var chapters = Array.Empty<ChapterInfo>();
         var streams = new List<MediaStream>();
@@ -98,16 +97,14 @@ public class FFProbeVideoInfoTests
 
         Assert.True(video.BluRayPlaylistNameIsValid);
         Assert.Equal("00801.mpls", video.BluRayLastProbedPlaylistName);
-        Assert.Equal("00800.mpls", video.BluRayDefaultPlaylistName);
     }
 
     [Fact]
-    public void FetchBdInfo_WithInvalidManualPlaylist_MarksSelectionInvalidAndUpdatesDefault()
+    public void FetchBdInfo_WithInvalidManualPlaylist_MarksSelectionInvalidWithoutPersistingDefault()
     {
         var video = new Video
         {
-            BluRayPlaylistName = "00999.mpls",
-            BluRayDefaultPlaylistName = "00800.mpls"
+            BluRayPlaylistName = "00999.mpls"
         };
         var chapters = Array.Empty<ChapterInfo>();
         var streams = new List<MediaStream>();
@@ -119,18 +116,16 @@ public class FFProbeVideoInfoTests
             new BlurayDiscInfo { PlaylistName = "00802.mpls" });
 
         Assert.False(video.BluRayPlaylistNameIsValid);
-        Assert.Equal("00999.mpls", video.BluRayLastProbedPlaylistName);
-        Assert.Equal("00802.mpls", video.BluRayDefaultPlaylistName);
-        Assert.Equal("00802.mpls", video.EffectiveBluRayPlaylistName);
+        Assert.Null(video.BluRayLastProbedPlaylistName);
+        Assert.Null(video.EffectiveBluRayPlaylistName);
     }
 
     [Fact]
-    public void FetchBdInfo_WithoutManualPlaylist_ClearsValidityAndUpdatesDefault()
+    public void FetchBdInfo_WithoutManualPlaylist_ClearsValidityAndLeavesSelectionNull()
     {
         var video = new Video
         {
-            BluRayPlaylistNameIsValid = false,
-            BluRayDefaultPlaylistName = "00800.mpls"
+            BluRayPlaylistNameIsValid = false
         };
         var chapters = Array.Empty<ChapterInfo>();
         var streams = new List<MediaStream>();
@@ -143,7 +138,7 @@ public class FFProbeVideoInfoTests
 
         Assert.Null(video.BluRayPlaylistNameIsValid);
         Assert.Null(video.BluRayLastProbedPlaylistName);
-        Assert.Equal("00803.mpls", video.BluRayDefaultPlaylistName);
+        Assert.Null(video.EffectiveBluRayPlaylistName);
     }
 
     [Fact]

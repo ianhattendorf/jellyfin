@@ -38,4 +38,17 @@ public interface IAttachmentExtractor
         string inputFile,
         MediaSourceInfo mediaSource,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Extracts all attachments from an external media file.
+    /// </summary>
+    /// <param name="inputFile">The external input file path.</param>
+    /// <param name="mediaSource">The <see cref="MediaSourceInfo" /> containing the attachment metadata.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The async task.</returns>
+    Task ExtractAllAttachmentsFromExternalFile(
+        string inputFile,
+        MediaSourceInfo mediaSource,
+        CancellationToken cancellationToken)
+        => ExtractAllAttachments(inputFile, mediaSource, cancellationToken);
 }

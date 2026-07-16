@@ -666,7 +666,7 @@ namespace MediaBrowser.MediaEncoding.Subtitles
 
             foreach (string mksFile in mksFiles)
             {
-                var inputPath = _mediaEncoder.GetInputArgument(mksFile, mediaSource);
+                var inputPath = _mediaEncoder.GetExternalSubtitleInputArgument(mksFile);
                 var outputPaths = new List<string>();
                 var args = string.Format(
                     CultureInfo.InvariantCulture,
@@ -723,11 +723,13 @@ namespace MediaBrowser.MediaEncoding.Subtitles
             List<MediaStream> subtitleStreams,
             CancellationToken cancellationToken)
         {
-            var inputPath = _mediaEncoder.GetInputArgument(mediaSource.Path, mediaSource);
+            var inputPath = _mediaEncoder.GetInputPathArgument(mediaSource.Path, mediaSource);
+            var inputOptions = _mediaEncoder.GetInputOptions(mediaSource);
             var outputPaths = new List<string>();
             var args = string.Format(
                 CultureInfo.InvariantCulture,
-                "-i {0}",
+                "{0} -i {1}",
+                inputOptions,
                 inputPath);
 
             foreach (var subtitleStream in subtitleStreams)
@@ -912,15 +914,18 @@ namespace MediaBrowser.MediaEncoding.Subtitles
                 {
                     var subtitleStreamIndex = EncodingHelper.FindIndex(mediaSource.MediaStreams, subtitleStream);
 
-                    var args = _mediaEncoder.GetInputArgument(mediaSource.Path, mediaSource);
+                    var args = _mediaEncoder.GetInputPathArgument(mediaSource.Path, mediaSource);
+                    var inputOptions = _mediaEncoder.GetInputOptions(mediaSource);
 
                     if (subtitleStream.IsExternal)
                     {
                         args = _mediaEncoder.GetExternalSubtitleInputArgument(subtitleStream.Path);
+                        inputOptions = string.Empty;
                     }
 
                     await ExtractTextSubtitleInternal(
                         args,
+                        inputOptions,
                         subtitleStreamIndex,
                         outputCodec,
                         outputPath,
@@ -931,6 +936,7 @@ namespace MediaBrowser.MediaEncoding.Subtitles
 
         private async Task ExtractTextSubtitleInternal(
             string inputPath,
+            string inputOptions,
             int subtitleStreamIndex,
             string outputCodec,
             string outputPath,
@@ -944,7 +950,8 @@ namespace MediaBrowser.MediaEncoding.Subtitles
 
             var processArgs = string.Format(
                 CultureInfo.InvariantCulture,
-                "-i {0} -copyts -map 0:{1} -an -vn -c:s {2} \"{3}\"",
+                "{0} -i {1} -copyts -map 0:{2} -an -vn -c:s {3} \"{4}\"",
+                inputOptions,
                 inputPath,
                 subtitleStreamIndex,
                 outputCodec,

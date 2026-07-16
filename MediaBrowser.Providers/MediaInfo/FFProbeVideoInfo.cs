@@ -81,6 +81,9 @@ namespace MediaBrowser.Providers.MediaInfo
             where T : Video
         {
             BlurayDiscInfo? blurayDiscInfo = null;
+            var bluRayPlaylistRevision = item.BluRayPlaylistRevision;
+            var bluRayPlaylistName = item.BluRayPlaylistName;
+            string? bluRayDiscFingerprint = null;
 
             Model.MediaInfo.MediaInfo? mediaInfoResult = null;
 
@@ -123,23 +126,38 @@ namespace MediaBrowser.Providers.MediaInfo
                 }
                 else if (item.VideoType == VideoType.BluRay)
                 {
+                    bluRayDiscFingerprint = _blurayExaminer.GetDiscFingerprint(item.Path);
+
                     // Get BD disc information
-                    blurayDiscInfo = GetBDInfo(item.Path, item.BluRayPlaylistName);
+                    blurayDiscInfo = GetBDInfo(item.Path, item.BluRayPlaylistName, bluRayPlaylistRevision);
 
                     // Return if no playable .m2ts files are found
                     if (blurayDiscInfo is null || blurayDiscInfo.Files.Length == 0)
                     {
                         _logger.LogError("No playable .m2ts files found in Blu-ray structure, skipping FFprobe.");
+                        item.BluRayPlaybackPlan = blurayDiscInfo?.PlaybackPlan;
+                        item.BluRayPlaylistNameIsValid = string.IsNullOrWhiteSpace(item.BluRayPlaylistName)
+                            ? null
+                            : false;
+                        item.BluRayLastProbedPlaylistName = null;
+                        item.BluRayLastProbedPlaylistRevision = bluRayPlaylistRevision;
+                        item.BluRayPlaylistProbeVersion = Video.CurrentBluRayPlaylistProbeVersion;
+                        item.BluRayDiscFingerprint = bluRayDiscFingerprint;
                         return ItemUpdateType.MetadataImport;
                     }
 
-                    // Fetch metadata of first .m2ts file
-                    mediaInfoResult = await GetMediaInfo(
-                        new Video
-                        {
-                            Path = blurayDiscInfo.Files[0]
-                        },
-                        cancellationToken).ConfigureAwait(false);
+                    if (blurayDiscInfo.PlaybackPlan?.IsSupported == true)
+                    {
+                        // Probe the same selected-playlist timeline used by playback and extraction.
+                        mediaInfoResult = await GetMediaInfo(item, blurayDiscInfo.PlaybackPlan, cancellationToken).ConfigureAwait(false);
+                    }
+                    else
+                    {
+                        _logger.LogWarning(
+                            "Blu-ray playlist {PlaylistName} cannot be represented by the concat input: {Reason}",
+                            blurayDiscInfo.PlaylistName,
+                            blurayDiscInfo.PlaybackPlan?.FailureMessage);
+                    }
                 }
                 else
                 {
@@ -149,13 +167,36 @@ namespace MediaBrowser.Providers.MediaInfo
                 cancellationToken.ThrowIfCancellationRequested();
             }
 
+            if (item.VideoType == VideoType.BluRay
+                && (!string.Equals(item.BluRayPlaylistName, bluRayPlaylistName, StringComparison.Ordinal)
+                    || item.BluRayPlaylistRevision != bluRayPlaylistRevision
+                    || !string.Equals(_blurayExaminer.GetDiscFingerprint(item.Path), bluRayDiscFingerprint, StringComparison.Ordinal)))
+            {
+                _logger.LogInformation("Discarding stale Blu-ray probe result for {Path}.", item.Path);
+                return ItemUpdateType.None;
+            }
+
             await Fetch(item, cancellationToken, mediaInfoResult, blurayDiscInfo, options).ConfigureAwait(false);
+
+            if (item.VideoType == VideoType.BluRay)
+            {
+                item.BluRayPlaybackPlan = blurayDiscInfo?.PlaybackPlan;
+                item.BluRayLastProbedPlaylistRevision = bluRayPlaylistRevision;
+                item.BluRayPlaylistProbeVersion = Video.CurrentBluRayPlaylistProbeVersion;
+                item.BluRayDiscFingerprint = bluRayDiscFingerprint;
+            }
 
             return ItemUpdateType.MetadataImport;
         }
 
         private Task<Model.MediaInfo.MediaInfo> GetMediaInfo(
             Video item,
+            CancellationToken cancellationToken)
+            => GetMediaInfo(item, null, cancellationToken);
+
+        private Task<Model.MediaInfo.MediaInfo> GetMediaInfo(
+            Video item,
+            BluRayPlaybackPlan? playbackPlan,
             CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -176,10 +217,13 @@ namespace MediaBrowser.Providers.MediaInfo
                     MediaType = DlnaProfileType.Video,
                     MediaSource = new MediaSourceInfo
                     {
+                        Id = item.Id.ToString("N", CultureInfo.InvariantCulture),
                         Path = path,
                         Protocol = protocol,
                         VideoType = item.VideoType,
-                        IsoType = item.IsoType
+                        IsoType = item.IsoType,
+                        BluRayPlaylistName = playbackPlan?.PlaylistName,
+                        BluRayPlaybackPlan = playbackPlan
                     }
                 },
                 cancellationToken);
@@ -341,7 +385,6 @@ namespace MediaBrowser.Providers.MediaInfo
                 if (string.IsNullOrWhiteSpace(video.BluRayPlaylistName))
                 {
                     video.BluRayPlaylistNameIsValid = null;
-                    video.BluRayDefaultPlaylistName = blurayInfo.PlaylistName;
                 }
                 else
                 {
@@ -349,14 +392,11 @@ namespace MediaBrowser.Providers.MediaInfo
                         video.BluRayPlaylistName,
                         blurayInfo.PlaylistName,
                         StringComparison.OrdinalIgnoreCase);
-
-                    if (video.BluRayPlaylistNameIsValid == false)
-                    {
-                        video.BluRayDefaultPlaylistName = blurayInfo.PlaylistName;
-                    }
                 }
 
-                video.BluRayLastProbedPlaylistName = video.BluRayPlaylistName;
+                video.BluRayLastProbedPlaylistName = video.BluRayPlaylistNameIsValid == true
+                    ? video.BluRayPlaylistName
+                    : null;
             }
 
             if (blurayInfo.Chapters is not null)
@@ -396,14 +436,15 @@ namespace MediaBrowser.Providers.MediaInfo
         /// </summary>
         /// <param name="path">The path.</param>
         /// <param name="playlistName">The optional canonical playlist name.</param>
+        /// <param name="playlistRevision">The selected-playlist revision.</param>
         /// <returns>VideoStream.</returns>
-        private BlurayDiscInfo? GetBDInfo(string path, string? playlistName)
+        private BlurayDiscInfo? GetBDInfo(string path, string? playlistName, long playlistRevision)
         {
             ArgumentException.ThrowIfNullOrEmpty(path);
 
             try
             {
-                return _blurayExaminer.GetDiscInfo(path, playlistName);
+                return _blurayExaminer.GetDiscInfo(path, playlistName, playlistRevision);
             }
             catch (Exception ex)
             {

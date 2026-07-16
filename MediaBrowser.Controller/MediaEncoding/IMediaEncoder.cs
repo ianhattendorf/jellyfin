@@ -217,6 +217,13 @@ namespace MediaBrowser.Controller.MediaEncoding
         string GetInputArgument(IReadOnlyList<string> inputFiles, MediaSourceInfo mediaSource);
 
         /// <summary>
+        /// Gets protocol-specific options that must precede the input argument.
+        /// </summary>
+        /// <param name="mediaSource">The media source.</param>
+        /// <returns>The protocol-specific input options.</returns>
+        string GetInputOptions(MediaSourceInfo mediaSource) => string.Empty;
+
+        /// <summary>
         /// Gets the input argument for an external subtitle file.
         /// </summary>
         /// <param name="inputFile">The input file.</param>
@@ -254,12 +261,20 @@ namespace MediaBrowser.Controller.MediaEncoding
         IReadOnlyList<string> GetPrimaryPlaylistVobFiles(string path, uint? titleNumber);
 
         /// <summary>
-        /// Gets the primary playlist of .m2ts files.
+        /// Gets the default Blu-ray playlist files.
         /// </summary>
-        /// <param name="path">The to the .m2ts files.</param>
+        /// <param name="path">The Blu-ray path.</param>
+        /// <returns>The ordered playlist files.</returns>
+        IReadOnlyList<string> GetPrimaryPlaylistM2tsFiles(string path);
+
+        /// <summary>
+        /// Gets the selected Blu-ray playlist files.
+        /// </summary>
+        /// <param name="path">The Blu-ray path.</param>
         /// <param name="playlistName">The optional canonical playlist name.</param>
-        /// <returns>A playlist.</returns>
-        IReadOnlyList<string> GetPrimaryPlaylistM2tsFiles(string path, string playlistName);
+        /// <returns>The ordered playlist files.</returns>
+        IReadOnlyList<string> GetPrimaryPlaylistM2tsFiles(string path, string playlistName)
+            => GetPrimaryPlaylistM2tsFiles(path);
 
         /// <summary>
         /// Gets the input path argument from <see cref="EncodingJobInfo"/>.

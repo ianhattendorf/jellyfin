@@ -21,11 +21,15 @@ public class BdInfoExaminerTests
         var selectedMethod = Assert.Single(methods, method =>
             method.Name == nameof(IBlurayExaminer.GetDiscInfo)
             && method.GetParameters().Length == 2);
+        var revisionMethod = Assert.Single(methods, method =>
+            method.Name == nameof(IBlurayExaminer.GetDiscInfo)
+            && method.GetParameters().Length == 3);
         var listMethod = Assert.Single(methods, method => method.Name == nameof(IBlurayExaminer.GetDiscPlaylists));
         var fingerprintMethod = Assert.Single(methods, method => method.Name == nameof(IBlurayExaminer.GetDiscFingerprint));
 
         Assert.True(legacyMethod.IsAbstract);
         Assert.False(selectedMethod.IsAbstract);
+        Assert.False(revisionMethod.IsAbstract);
         Assert.False(listMethod.IsAbstract);
         Assert.False(fingerprintMethod.IsAbstract);
     }
@@ -36,8 +40,10 @@ public class BdInfoExaminerTests
         IBlurayExaminer examiner = new LegacyBlurayExaminer();
 
         var result = examiner.GetDiscInfo("/media/movie", "00800.mpls");
+        var revisionResult = examiner.GetDiscInfo("/media/movie", "00800.mpls", 3);
 
         Assert.Equal("legacy.mpls", result.PlaylistName);
+        Assert.Equal("legacy.mpls", revisionResult.PlaylistName);
         Assert.Empty(examiner.GetDiscPlaylists("/media/movie"));
         Assert.Null(examiner.GetDiscFingerprint("/media/movie"));
     }
@@ -109,6 +115,36 @@ public class BdInfoExaminerTests
 
         Assert.NotNull(result);
         Assert.Equal("00800.mpls", result.Name);
+    }
+
+    [Fact]
+    public void SelectDefaultPlaylist_PrefersEligiblePlaylistOverLongerRepeatedContent()
+    {
+        var playlists = new[]
+        {
+            new BdInfoPlaylistCandidate("00149.mpls", TimeSpan.FromMinutes(190).Ticks, IsDefaultEligible: false),
+            Playlist("00040.mpls", TimeSpan.FromMinutes(119))
+        };
+
+        var result = BdInfoExaminer.SelectDefaultPlaylist(playlists);
+
+        Assert.NotNull(result);
+        Assert.Equal("00040.mpls", result.Name);
+    }
+
+    [Fact]
+    public void SelectDefaultPlaylist_FallsBackWhenEveryPlaylistIsIneligible()
+    {
+        var playlists = new[]
+        {
+            new BdInfoPlaylistCandidate("00800.mpls", TimeSpan.FromMinutes(90).Ticks, IsDefaultEligible: false),
+            new BdInfoPlaylistCandidate("00801.mpls", TimeSpan.FromMinutes(95).Ticks, IsDefaultEligible: false)
+        };
+
+        var result = BdInfoExaminer.SelectDefaultPlaylist(playlists);
+
+        Assert.NotNull(result);
+        Assert.Equal("00801.mpls", result.Name);
     }
 
     [Fact]

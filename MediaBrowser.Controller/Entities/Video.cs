@@ -32,6 +32,11 @@ namespace MediaBrowser.Controller.Entities
         ISupportsPlaceHolders,
         IHasMediaSources
     {
+        /// <summary>
+        /// The current version of persisted Blu-ray playlist probe state.
+        /// </summary>
+        public const int CurrentBluRayPlaylistProbeVersion = 3;
+
         public Video()
         {
             AdditionalParts = [];
@@ -135,12 +140,6 @@ namespace MediaBrowser.Controller.Entities
         public string BluRayPlaylistName { get; set; }
 
         /// <summary>
-        /// Gets or sets the default Blu-ray playlist name selected during media probing.
-        /// </summary>
-        /// <value>The default Blu-ray playlist name.</value>
-        public string BluRayDefaultPlaylistName { get; set; }
-
-        /// <summary>
         /// Gets or sets a value indicating whether the selected Blu-ray playlist was valid during the last media probe.
         /// </summary>
         /// <value>Whether the selected Blu-ray playlist was valid.</value>
@@ -153,13 +152,40 @@ namespace MediaBrowser.Controller.Entities
         public string BluRayLastProbedPlaylistName { get; set; }
 
         /// <summary>
-        /// Gets the selected Blu-ray playlist name, or the default playlist name when no playlist is selected.
+        /// Gets or sets the revision of the desired Blu-ray playlist selection.
+        /// </summary>
+        public long BluRayPlaylistRevision { get; set; }
+
+        /// <summary>
+        /// Gets or sets the desired-selection revision applied by the last successful probe.
+        /// </summary>
+        public long BluRayLastProbedPlaylistRevision { get; set; }
+
+        /// <summary>
+        /// Gets or sets the version of the persisted Blu-ray probe state.
+        /// </summary>
+        public int BluRayPlaylistProbeVersion { get; set; }
+
+        /// <summary>
+        /// Gets or sets the fingerprint of the BDMV structure used by the last successful probe.
+        /// </summary>
+        public string BluRayDiscFingerprint { get; set; }
+
+        /// <summary>
+        /// Gets or sets the persisted selected-playlist playback plan.
+        /// </summary>
+        public BluRayPlaybackPlan BluRayPlaybackPlan { get; set; }
+
+        /// <summary>
+        /// Gets the selected Blu-ray playlist name when the selection is valid.
         /// </summary>
         /// <value>The effective Blu-ray playlist name.</value>
         [JsonIgnore]
-        public string EffectiveBluRayPlaylistName => string.IsNullOrWhiteSpace(BluRayPlaylistName) || BluRayPlaylistNameIsValid == false
-            ? BluRayDefaultPlaylistName
-            : BluRayPlaylistName;
+        public string EffectiveBluRayPlaylistName => BluRayPlaylistProbeVersion == CurrentBluRayPlaylistProbeVersion
+            && BluRayPlaylistRevision == BluRayLastProbedPlaylistRevision
+            && BluRayPlaylistNameIsValid == true
+            ? BluRayLastProbedPlaylistName
+            : null;
 
         /// <summary>
         /// Gets or sets the type of the iso.

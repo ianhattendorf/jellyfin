@@ -33,6 +33,11 @@ namespace MediaBrowser.Controller.MediaEncoding
 {
     public partial class EncodingHelper
     {
+        // UHD Blu-ray's maximum transfer rate is 128 Mbit/s. If a Blu-ray probe cannot
+        // determine the elementary video bitrate, a client limit at or above this value
+        // cannot be exceeded by a conforming disc and should not force a video encode.
+        private const int MaxBluRayVideoBitrate = 128_000_000;
+
         /// <summary>
         /// The codec validation regex string.
         /// This regular expression matches strings that consist of alphanumeric characters, hyphens,
@@ -48,7 +53,6 @@ namespace MediaBrowser.Controller.MediaEncoding
         public const string LevelValidationRegexStr = @"-?[0-9]+(?:\.[0-9]+)?";
 
         private const string _defaultMjpegEncoder = "mjpeg";
-
         private const string QsvAlias = "qs";
         private const string VaapiAlias = "va";
         private const string D3d11vaAlias = "dx11";
@@ -1258,7 +1262,7 @@ namespace MediaBrowser.Controller.MediaEncoding
                 arg.Append(canvasArgs);
             }
 
-            if (state.MediaSource.VideoType == VideoType.Dvd || state.MediaSource.VideoType == VideoType.BluRay)
+            if (state.MediaSource.VideoType == VideoType.Dvd)
             {
                 var concatFilePath = MediaEncodingPathHelper.GetConcatConfigPath(_configurationManager.CommonApplicationPaths.CachePath, state.MediaSource);
                 if (!File.Exists(concatFilePath))
@@ -1272,6 +1276,12 @@ namespace MediaBrowser.Controller.MediaEncoding
             }
             else
             {
+                var inputOptions = _mediaEncoder.GetInputOptions(state.MediaSource);
+                if (!string.IsNullOrEmpty(inputOptions))
+                {
+                    arg.Append(' ').Append(inputOptions);
+                }
+
                 arg.Append(" -i ")
                     .Append(_mediaEncoder.GetInputPathArgument(state));
             }
@@ -1594,6 +1604,9 @@ namespace MediaBrowser.Controller.MediaEncoding
                 || !state.IsVideoRequest
                 || IsCopyCodec(state.OutputVideoCodec)
                 || !IsCopyCodec(state.OutputAudioCodec)
+                // Playlist-aware Blu-ray concat input seeking rebases timestamps near zero.
+                // Trimming against the absolute seek time would discard copied audio until that time.
+                || state.MediaSource?.VideoType == VideoType.BluRay
                 || string.Equals(state.InputContainer, "wtv", StringComparison.OrdinalIgnoreCase)
                 || _mediaEncoder.EncoderVersion < _minFFmpegNoiseBsfDrop)
             {
@@ -2399,7 +2412,6 @@ namespace MediaBrowser.Controller.MediaEncoding
         public bool CanStreamCopyVideo(EncodingJobInfo state, MediaStream videoStream)
         {
             var request = state.BaseRequest;
-
             if (!request.AllowVideoStreamCopy)
             {
                 return false;
@@ -2565,7 +2577,13 @@ namespace MediaBrowser.Controller.MediaEncoding
                 // For LiveTV that has no bitrate, let's try copy if other conditions are met
                 if (string.IsNullOrWhiteSpace(request.LiveStreamId) || videoStream.BitRate.HasValue)
                 {
-                    return false;
+                    var unknownBluRayBitrateFitsLimit = !videoStream.BitRate.HasValue
+                        && state.MediaSource.VideoType == VideoType.BluRay
+                        && request.VideoBitRate.Value >= MaxBluRayVideoBitrate;
+                    if (!unknownBluRayBitrateFitsLimit)
+                    {
+                        return false;
+                    }
                 }
             }
 
@@ -3051,6 +3069,14 @@ namespace MediaBrowser.Controller.MediaEncoding
 
             if (time > 0)
             {
+                // A seek-specific Blu-ray concat manifest starts at the requested playlist
+                // position, so applying the absolute seek again would double-seek the input.
+                if (state.MediaSource.VideoType == VideoType.BluRay
+                    && state.MediaSource.BluRayPlaybackPlan?.IsSupported == true)
+                {
+                    return string.Empty;
+                }
+
                 // For direct streaming/remuxing, HLS segments start at keyframes.
                 // However, ffmpeg will seek to previous keyframe when the exact frame time is the input
                 // Workaround this by adding 0.5s offset to the seeking time to get the exact keyframe on most videos.
@@ -3069,6 +3095,19 @@ namespace MediaBrowser.Controller.MediaEncoding
             }
 
             return seekParam;
+        }
+
+        /// <summary>
+        /// Gets the child HLS segment timestamp offset option for a stream after seeking.
+        /// </summary>
+        /// <param name="state">The encoding job state.</param>
+        /// <returns>The child HLS segment timestamp offset option.</returns>
+        public string GetHlsSegmentTimestampOffsetOption(EncodingJobInfo state)
+        {
+            var time = state.BaseRequest.StartTimeTicks ?? 0;
+            return time > 0
+                ? "output_ts_offset=" + TimeSpan.FromTicks(time).TotalSeconds.ToString("0.###", CultureInfo.InvariantCulture)
+                : string.Empty;
         }
 
         /// <summary>
@@ -7287,6 +7326,14 @@ namespace MediaBrowser.Controller.MediaEncoding
         }
 
         public string GetInputModifier(EncodingJobInfo state, EncodingOptions encodingOptions, string segmentContainer)
+            => GetInputModifier(state, encodingOptions, segmentContainer, includeSeek: true, allowReadrateLimit: true);
+
+        public string GetInputModifier(
+            EncodingJobInfo state,
+            EncodingOptions encodingOptions,
+            string segmentContainer,
+            bool includeSeek,
+            bool allowReadrateLimit)
         {
             var inputModifier = string.Empty;
             var analyzeDurationArgument = GetFfmpegAnalyzeDurationArg(state);
@@ -7324,8 +7371,11 @@ namespace MediaBrowser.Controller.MediaEncoding
 
             inputModifier = inputModifier.Trim();
 
-            inputModifier += " " + GetFastSeekCommandLineParameter(state, encodingOptions, segmentContainer);
-            inputModifier = inputModifier.Trim();
+            if (includeSeek)
+            {
+                inputModifier += " " + GetFastSeekCommandLineParameter(state, encodingOptions, segmentContainer);
+                inputModifier = inputModifier.Trim();
+            }
 
             if (state.InputProtocol == MediaProtocol.Rtsp)
             {
@@ -7349,7 +7399,8 @@ namespace MediaBrowser.Controller.MediaEncoding
                 readrate = 1;
                 inputModifier += " -re";
             }
-            else if (encodingOptions.EnableSegmentDeletion
+            else if (allowReadrateLimit
+                && encodingOptions.EnableSegmentDeletion
                 && state.VideoStream is not null
                 && state.TranscodingType == TranscodingJobType.Hls
                 && IsCopyCodec(state.OutputVideoCodec)

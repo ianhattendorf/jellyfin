@@ -30,6 +30,16 @@ namespace Jellyfin.MediaEncoding.Tests
             Assert.Equal(valid, _encoderValidator.ValidateVersionInternal(versionOutput));
         }
 
+        [Fact]
+        public void ParseInputProtocols_ReturnsOnlyInputSection()
+        {
+            const string Output = "Supported file protocols:\nInput:\n  async\n  bluray\n  file\nOutput:\n  file\n  http\n";
+
+            var result = EncoderValidator.ParseInputProtocols(Output);
+
+            Assert.Equal(["async", "bluray", "file"], result);
+        }
+
         private sealed class GetFFmpegVersionTestData : TheoryData<string, Version?>
         {
             public GetFFmpegVersionTestData()

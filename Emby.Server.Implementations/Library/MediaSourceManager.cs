@@ -58,8 +58,10 @@ namespace Emby.Server.Implementations.Library
         private readonly IDirectoryService _directoryService;
         private readonly IMediaStreamRepository _mediaStreamRepository;
         private readonly IMediaAttachmentRepository _mediaAttachmentRepository;
+        private readonly IBlurayExaminer _blurayExaminer;
         private readonly ConcurrentDictionary<string, ILiveStream> _openStreams = new ConcurrentDictionary<string, ILiveStream>(StringComparer.OrdinalIgnoreCase);
         private readonly AsyncNonKeyedLocker _liveStreamLocker = new(1);
+        private readonly AsyncKeyedLocker<Guid> _bluRayPlaybackPlanLocks = new();
         private readonly JsonSerializerOptions _jsonOptions = JsonDefaults.Options;
 
         private IMediaSourceProvider[] _providers;
@@ -77,7 +79,8 @@ namespace Emby.Server.Implementations.Library
             IMediaEncoder mediaEncoder,
             IDirectoryService directoryService,
             IMediaStreamRepository mediaStreamRepository,
-            IMediaAttachmentRepository mediaAttachmentRepository)
+            IMediaAttachmentRepository mediaAttachmentRepository,
+            IBlurayExaminer blurayExaminer)
         {
             _appHost = appHost;
             _itemRepo = itemRepo;
@@ -92,6 +95,7 @@ namespace Emby.Server.Implementations.Library
             _directoryService = directoryService;
             _mediaStreamRepository = mediaStreamRepository;
             _mediaAttachmentRepository = mediaAttachmentRepository;
+            _blurayExaminer = blurayExaminer;
         }
 
         public void AddParts(IEnumerable<IMediaSourceProvider> providers)
@@ -176,7 +180,23 @@ namespace Emby.Server.Implementations.Library
 
         public async Task<IReadOnlyList<MediaSourceInfo>> GetPlaybackMediaSources(BaseItem item, User user, bool allowMediaProbe, bool enablePathSubstitution, CancellationToken cancellationToken)
         {
+            await EnsureBluRayPlaybackPlan(item as Video, cancellationToken).ConfigureAwait(false);
             var mediaSources = GetStaticMediaSources(item, enablePathSubstitution, user);
+            foreach (var source in mediaSources.Where(i => i.VideoType == VideoType.BluRay && i.BluRayPlaybackPlan is null))
+            {
+                var sourceVideo = Guid.TryParse(source.Id, out var sourceId)
+                    ? _libraryManager.GetItemById(sourceId) as Video
+                    : null;
+                if (sourceVideo is null)
+                {
+                    continue;
+                }
+
+                await EnsureBluRayPlaybackPlan(sourceVideo, cancellationToken).ConfigureAwait(false);
+                source.BluRayPlaybackPlan = sourceVideo.BluRayPlaybackPlan;
+                source.BluRayPlaylistName = sourceVideo.EffectiveBluRayPlaylistName;
+            }
+
             ResolveSymlinkPaths(mediaSources, enablePathSubstitution);
 
             // If file is strm or main media stream is missing, force a metadata refresh with remote probing
@@ -234,6 +254,72 @@ namespace Emby.Server.Implementations.Library
                 : item.Id;
 
             return SortMediaSources(list, preferredId).ToArray();
+        }
+
+        private async Task EnsureBluRayPlaybackPlan(Video video, CancellationToken cancellationToken)
+        {
+            if (video?.VideoType != VideoType.BluRay || IsCurrentBluRayPlaybackPlan(video))
+            {
+                return;
+            }
+
+            using (await _bluRayPlaybackPlanLocks.LockAsync(video.Id, cancellationToken).ConfigureAwait(false))
+            {
+                if (IsCurrentBluRayPlaybackPlan(video))
+                {
+                    return;
+                }
+
+                _logger.LogInformation("Building selected-playlist playback plan for Blu-ray item {ItemId}", video.Id);
+                var discInfo = _blurayExaminer.GetDiscInfo(video.Path, video.BluRayPlaylistName, video.BluRayPlaylistRevision);
+                var plan = discInfo.PlaybackPlan
+                    ?? throw new InvalidDataException("The Blu-ray examiner did not return a selected-playlist playback plan.");
+
+                var hasManualSelection = !string.IsNullOrWhiteSpace(video.BluRayPlaylistName);
+                var manualSelectionIsValid = hasManualSelection
+                    && string.Equals(video.BluRayPlaylistName, plan.PlaylistName, StringComparison.OrdinalIgnoreCase)
+                    && plan.FailureReason != BluRayPlaybackPlanFailureReason.PlaylistNotFound;
+
+                video.BluRayPlaybackPlan = plan;
+                video.BluRayPlaylistNameIsValid = hasManualSelection ? manualSelectionIsValid : null;
+                video.BluRayLastProbedPlaylistName = manualSelectionIsValid ? plan.PlaylistName : null;
+                video.BluRayLastProbedPlaylistRevision = video.BluRayPlaylistRevision;
+                video.BluRayPlaylistProbeVersion = Video.CurrentBluRayPlaylistProbeVersion;
+                video.BluRayDiscFingerprint = plan.DiscFingerprint;
+
+                await video.UpdateToRepositoryAsync(ItemUpdateType.MetadataImport, cancellationToken).ConfigureAwait(false);
+            }
+        }
+
+        private static bool IsCurrentBluRayPlaybackPlan(Video video)
+        {
+            var plan = video.BluRayPlaybackPlan;
+            if (video.BluRayPlaylistProbeVersion != Video.CurrentBluRayPlaylistProbeVersion
+                || plan is null
+                || plan.SchemaVersion != BluRayPlaybackPlan.CurrentSchemaVersion
+                || plan.PlaylistRevision != video.BluRayPlaylistRevision
+                || string.IsNullOrWhiteSpace(plan.DiscFingerprint)
+                || !string.Equals(plan.DiscFingerprint, video.BluRayDiscFingerprint, StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            if (string.IsNullOrWhiteSpace(video.BluRayPlaylistName))
+            {
+                return video.BluRayPlaylistNameIsValid is null
+                    && string.IsNullOrWhiteSpace(video.BluRayLastProbedPlaylistName);
+            }
+
+            if (!string.Equals(video.BluRayPlaylistName, plan.PlaylistName, StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            return video.BluRayPlaylistNameIsValid == true
+                ? string.Equals(video.BluRayLastProbedPlaylistName, plan.PlaylistName, StringComparison.OrdinalIgnoreCase)
+                : video.BluRayPlaylistNameIsValid == false
+                    && plan.FailureReason == BluRayPlaybackPlanFailureReason.PlaylistNotFound
+                    && string.IsNullOrWhiteSpace(video.BluRayLastProbedPlaylistName);
         }
 
         /// <inheritdoc />>
@@ -1063,6 +1149,7 @@ namespace Emby.Server.Implementations.Library
                 }
 
                 _liveStreamLocker.Dispose();
+                _bluRayPlaybackPlanLocks.Dispose();
             }
         }
     }

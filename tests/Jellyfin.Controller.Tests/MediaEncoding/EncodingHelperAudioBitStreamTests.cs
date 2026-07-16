@@ -4,6 +4,7 @@ using MediaBrowser.Common.Configuration;
 using MediaBrowser.Controller.IO;
 using MediaBrowser.Controller.MediaEncoding;
 using MediaBrowser.Model.Dlna;
+using MediaBrowser.Model.Dto;
 using MediaBrowser.Model.Entities;
 using Microsoft.Extensions.Configuration;
 using Moq;
@@ -54,6 +55,10 @@ namespace Jellyfin.Controller.Tests.MediaEncoding
                 OutputAudioCodec = outputAudioCodec,
                 InputContainer = inputContainer,
                 RunTimeTicks = TimeSpan.FromMinutes(10).Ticks,
+                MediaSource = new MediaSourceInfo
+                {
+                    VideoType = VideoType.VideoFile
+                },
                 AudioStream = new MediaStream
                 {
                     Type = MediaStreamType.Audio,
@@ -93,6 +98,32 @@ namespace Jellyfin.Controller.Tests.MediaEncoding
         {
             var state = CreateState(jobType, outputVideoCodec, outputAudioCodec, audioStreamCodec, inputContainer, startTicks);
             var result = CreateHelper(ffmpegVersion).GetAudioBitStreamArguments(state, segmentContainer, mediaSourceContainer);
+            Assert.Equal(expected, result);
+        }
+
+        [Theory]
+        [InlineData("aac", "ts", "mp4", "ts", AdtsOnly)]
+        [InlineData("ac3", "ts", "mp4", "ts", "")]
+        [InlineData("aac", "ts", "ts", "ts", "")]
+        public void AudioBitStreamArguments_DoesNotTrimRebasedBluRayConcatAudio(
+            string audioStreamCodec,
+            string inputContainer,
+            string segmentContainer,
+            string mediaSourceContainer,
+            string expected)
+        {
+            var state = CreateState(
+                TranscodingJobType.Hls,
+                "libx264",
+                "copy",
+                audioStreamCodec,
+                inputContainer,
+                DefaultSeekTicks);
+            state.MediaSource.VideoType = VideoType.BluRay;
+
+            var result = CreateHelper(DefaultFfmpegVersion)
+                .GetAudioBitStreamArguments(state, segmentContainer, mediaSourceContainer);
+
             Assert.Equal(expected, result);
         }
     }

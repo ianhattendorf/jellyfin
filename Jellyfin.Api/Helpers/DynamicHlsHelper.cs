@@ -230,7 +230,8 @@ public class DynamicHlsHelper
 
         var basicPlaylist = AppendPlaylist(builder, state, playlistUrl, totalBitrate, subtitleGroup);
 
-        if (state.VideoStream is not null && state.VideoRequest is not null)
+        if (state.VideoStream is not null
+            && state.VideoRequest is not null)
         {
             var encodingOptions = _serverConfigurationManager.GetEncodingOptions();
 
@@ -245,7 +246,8 @@ public class DynamicHlsHelper
                     && string.Equals(state.ActualOutputVideoCodec, "hevc", StringComparison.OrdinalIgnoreCase);
                 var isEncodingAllowed = isAv1EncodingAllowed || isHevcEncodingAllowed;
 
-                if (isEncodingAllowed
+                if (ShouldIncludeCompatibilityVideoVariants(state.MediaSource.VideoType)
+                    && isEncodingAllowed
                     && EncodingHelper.IsCopyCodec(state.OutputVideoCodec)
                     && state.VideoStream.VideoRange == VideoRange.HDR)
                 {
@@ -268,7 +270,8 @@ public class DynamicHlsHelper
             }
 
             // Provide H.264 SDR entrance for backward compatibility.
-            if (EncodingHelper.IsCopyCodec(state.OutputVideoCodec)
+            if (ShouldIncludeCompatibilityVideoVariants(state.MediaSource.VideoType)
+                && EncodingHelper.IsCopyCodec(state.OutputVideoCodec)
                 && state.VideoStream.VideoRange == VideoRange.HDR)
             {
                 // Force H.264 and disable video stream copy.
@@ -986,6 +989,12 @@ public class DynamicHlsHelper
 
         return variation;
     }
+
+    internal static bool ShouldIncludeCompatibilityVideoVariants(VideoType? videoType)
+        // Blu-ray playback already requires an HLS remux. When stream copy was negotiated,
+        // adding equal-bandwidth SDR encode variants makes FFmpeg/mpv choose an arbitrary
+        // variant and can turn UHD playback into an unintended software encode.
+        => videoType != VideoType.BluRay;
 
     private string ReplacePlaylistCodecsField(StringBuilder playlist, StringBuilder oldValue, StringBuilder newValue)
     {

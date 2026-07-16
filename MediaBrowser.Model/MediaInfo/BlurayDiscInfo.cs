@@ -9,6 +9,11 @@ namespace MediaBrowser.Model.MediaInfo;
 public class BlurayDiscInfo
 {
     /// <summary>
+    /// Gets or sets the deterministic selected-playlist playback plan.
+    /// </summary>
+    public BluRayPlaybackPlan? PlaybackPlan { get; set; }
+
+    /// <summary>
     /// Gets or sets the media streams.
     /// </summary>
     /// <value>The media streams.</value>

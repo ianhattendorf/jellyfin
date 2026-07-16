@@ -25,6 +25,7 @@ using MediaBrowser.Model.Configuration;
 using MediaBrowser.Model.Dlna;
 using MediaBrowser.Model.Entities;
 using MediaBrowser.Model.IO;
+using MediaBrowser.Model.MediaInfo;
 using MediaBrowser.Model.Net;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
@@ -44,7 +45,6 @@ public class DynamicHlsController : BaseJellyfinApiController
     private const EncoderPreset DefaultVodEncoderPreset = EncoderPreset.veryfast;
     private const EncoderPreset DefaultEventEncoderPreset = EncoderPreset.superfast;
     private const TranscodingJobType TranscodingJobType = MediaBrowser.Controller.MediaEncoding.TranscodingJobType.Hls;
-
     private readonly Version _minFFmpegFlacInMp4 = new Version(6, 0);
     private readonly Version _minFFmpegX265BframeInFmp4 = new Version(7, 0, 1);
     private readonly Version _minFFmpegHlsSegmentOptions = new Version(5, 0);
@@ -1400,6 +1400,7 @@ public class DynamicHlsController : BaseJellyfinApiController
                 TranscodingJobType,
                 cancellationTokenSource.Token)
             .ConfigureAwait(false);
+        ApplyBluRayFmp4MinimumSegmentLength(state);
         var mediaSourceId = state.BaseRequest.MediaSourceId;
         double fps = state.TargetFramerate ?? 0.0f;
         int segmentLength = state.SegmentLength * 1000;
@@ -1449,6 +1450,7 @@ public class DynamicHlsController : BaseJellyfinApiController
                 TranscodingJobType,
                 cancellationToken)
             .ConfigureAwait(false);
+        ApplyBluRayFmp4MinimumSegmentLength(state);
 
         var playlistPath = Path.ChangeExtension(state.OutputFilePath, ".m3u8");
 
@@ -1458,7 +1460,7 @@ public class DynamicHlsController : BaseJellyfinApiController
 
         TranscodingJob? job;
 
-        if (System.IO.File.Exists(segmentPath))
+        if (IsUsableSegmentFile(segmentPath))
         {
             job = _transcodeManager.OnTranscodeBeginRequest(playlistPath, TranscodingJobType);
             _logger.LogDebug("returning {0} [it exists, try 1]", segmentPath);
@@ -1468,7 +1470,7 @@ public class DynamicHlsController : BaseJellyfinApiController
         using (await _transcodeManager.LockAsync(playlistPath, cancellationToken).ConfigureAwait(false))
         {
             var startTranscoding = false;
-            if (System.IO.File.Exists(segmentPath))
+            if (IsUsableSegmentFile(segmentPath))
             {
                 job = _transcodeManager.OnTranscodeBeginRequest(playlistPath, TranscodingJobType);
                 _logger.LogDebug("returning {0} [it exists, try 2]", segmentPath);
@@ -1507,6 +1509,7 @@ public class DynamicHlsController : BaseJellyfinApiController
                 {
                     await _transcodeManager.KillTranscodingJobs(streamingRequest.DeviceId, streamingRequest.PlaySessionId, p => false)
                         .ConfigureAwait(false);
+                    TryDeleteEmptySegmentFile(segmentPath);
 
                     if (currentTranscodingIndex.HasValue)
                     {
@@ -1571,7 +1574,11 @@ public class DynamicHlsController : BaseJellyfinApiController
         return segments;
     }
 
-    private string GetCommandLineArguments(string outputPath, StreamState state, bool isEventPlaylist, int startNumber)
+    private string GetCommandLineArguments(
+        string outputPath,
+        StreamState state,
+        bool isEventPlaylist,
+        int startNumber)
     {
         var videoCodec = _encodingHelper.GetVideoEncoder(state, _encodingOptions);
         var threads = EncodingHelper.GetNumberOfThreads(state, _encodingOptions, videoCodec);
@@ -1586,8 +1593,26 @@ public class DynamicHlsController : BaseJellyfinApiController
 
         var segmentFormat = string.Empty;
         var segmentContainer = outputExtension.TrimStart('.');
-        var inputModifier = _encodingHelper.GetInputModifier(state, _encodingOptions, segmentContainer);
+        var isBluRaySeek = ShouldApplyOutputTimestampOffset(state.MediaSource.VideoType, state.BaseRequest.StartTimeTicks);
+        var inputModifier = _encodingHelper.GetInputModifier(
+            state,
+            _encodingOptions,
+            segmentContainer,
+            includeSeek: true,
+            allowReadrateLimit: !isBluRaySeek);
+
         var hlsArguments = $"-hls_playlist_type {(isEventPlaylist ? "event" : "vod")} -hls_list_size 0";
+        if (ShouldSplitBluRayRemuxSegments(state.MediaSource.VideoType, videoCodec))
+        {
+            // The synthetic VOD playlist advertises deterministic segment boundaries. Blu-ray
+            // transport streams can have sparse or irregular IDR frames, so the HLS muxer's
+            // default keyframe-only cuts produce fragments whose durations and sequence numbers
+            // do not match that playlist. Cutting on the HLS clock keeps requests and timestamps
+            // aligned; decoders can consume the recovery packets following a non-IDR boundary.
+            hlsArguments += " -hls_flags split_by_time";
+        }
+
+        var hlsSegmentOptions = new List<string>();
 
         if (string.Equals(segmentContainer, "ts", StringComparison.OrdinalIgnoreCase))
         {
@@ -1603,12 +1628,10 @@ public class DynamicHlsController : BaseJellyfinApiController
                 false => " -hls_fmp4_init_filename \"" + outputFileNameWithoutExtension + "-1" + outputExtension + "\""
             };
 
-            var useLegacySegmentOption = _mediaEncoder.EncoderVersion < _minFFmpegHlsSegmentOptions;
-
             if (state.VideoStream is not null && state.IsOutputVideo)
             {
                 // fMP4 needs this flag to write the audio packet DTS/PTS including the initial delay into MOOF::TRAF::TFDT
-                hlsArguments += $" {(useLegacySegmentOption ? "-hls_ts_options" : "-hls_segment_options")} movflags=+frag_discont";
+                hlsSegmentOptions.Add("movflags=+frag_discont");
             }
 
             segmentFormat = "fmp4" + outputFmp4HeaderArg;
@@ -1619,9 +1642,31 @@ public class DynamicHlsController : BaseJellyfinApiController
             segmentFormat = "mpegts";
         }
 
+        if (isBluRaySeek)
+        {
+            // Applying the offset to the parent HLS muxer makes its segment clock start at the
+            // requested media position, causing it to emit one short fragment per keyframe while
+            // it catches up. Apply it to each child segment muxer instead: the HLS segment clock
+            // remains zero-based while packets in fMP4/TS fragments retain their media timeline.
+            hlsSegmentOptions.Add(_encodingHelper.GetHlsSegmentTimestampOffsetOption(state));
+        }
+
+        if (hlsSegmentOptions.Count > 0)
+        {
+            hlsArguments += " " + BuildHlsSegmentOptionsArgument(
+                _mediaEncoder.EncoderVersion < _minFFmpegHlsSegmentOptions,
+                hlsSegmentOptions);
+        }
+
         var maxMuxingQueueSize = _encodingOptions.MaxMuxingQueueSize > 128
             ? _encodingOptions.MaxMuxingQueueSize.ToString(CultureInfo.InvariantCulture)
             : "128";
+
+        // Blu-ray playlists can span clips with discontinuous transport timestamps. Allow FFmpeg to
+        // normalize those timestamps instead of preserving gaps that prevent HLS segments from closing.
+        var timestampArguments = ShouldPreserveInputTimestamps(state.MediaSource.VideoType)
+            ? "-copyts -avoid_negative_ts disabled"
+            : string.Empty;
 
         var baseUrlParam = string.Empty;
         if (isEventPlaylist)
@@ -1634,13 +1679,15 @@ public class DynamicHlsController : BaseJellyfinApiController
 
         return string.Format(
             CultureInfo.InvariantCulture,
-            "{0} {1} -map_metadata -1 -map_chapters -1 -threads {2} {3} {4} {5} -copyts -avoid_negative_ts disabled -max_muxing_queue_size {6} -f hls -max_delay 5000000 -hls_time {7} -hls_segment_type {8} -start_number {9}{10} -hls_segment_filename \"{11}\" {12} -y \"{13}\"",
+            "{0} {1} {2} -map_metadata -1 -map_chapters -1 -threads {3} {4} {5} {6} {7} -max_muxing_queue_size {8} -f hls -max_delay 5000000 -hls_time {9} -hls_segment_type {10} -start_number {11}{12} -hls_segment_filename \"{13}\" {14} -y \"{15}\"",
             inputModifier,
             _encodingHelper.GetInputArgument(state, _encodingOptions, segmentContainer),
+            string.Empty,
             threads,
             mapArgs,
             GetVideoArguments(state, startNumber, isEventPlaylist, segmentContainer),
             GetAudioArguments(state),
+            timestampArguments,
             maxMuxingQueueSize,
             state.SegmentLength.ToString(CultureInfo.InvariantCulture),
             segmentFormat,
@@ -1649,6 +1696,89 @@ public class DynamicHlsController : BaseJellyfinApiController
             EncodingUtils.NormalizePath(outputTsArg),
             hlsArguments,
             EncodingUtils.NormalizePath(outputPath)).Trim();
+    }
+
+    internal static bool ShouldPreserveInputTimestamps(VideoType? videoType)
+        => videoType != VideoType.BluRay;
+
+    internal static bool ShouldApplyOutputTimestampOffset(VideoType? videoType, long? startTimeTicks)
+        => videoType == VideoType.BluRay && startTimeTicks > 0;
+
+    internal static bool ShouldSplitBluRayRemuxSegments(VideoType? videoType, string? videoCodec)
+        => videoType == VideoType.BluRay && EncodingHelper.IsCopyCodec(videoCodec);
+
+    internal static string BuildHlsSegmentOptionsArgument(bool useLegacyOptionName, IReadOnlyList<string> options)
+    {
+        if (options.Count == 0)
+        {
+            return string.Empty;
+        }
+
+        var optionName = useLegacyOptionName ? "-hls_ts_options" : "-hls_segment_options";
+        return optionName + " " + string.Join(':', options);
+    }
+
+    private void ApplyBluRayFmp4MinimumSegmentLength(StreamState state)
+    {
+        var adjustedSegmentLength = GetBluRayFmp4SegmentLength(
+            state.SegmentLength,
+            state.MediaSource.VideoType,
+            state.Request.SegmentContainer,
+            state.MediaSource.BluRayPlaybackPlan,
+            state.VideoStream?.Index,
+            state.AudioStream?.Index);
+        if (adjustedSegmentLength == state.SegmentLength)
+        {
+            return;
+        }
+
+        _logger.LogDebug(
+            "Increasing Blu-ray fMP4 HLS segment length from {OriginalLength} to {AdjustedLength} seconds so every selected stream is present in the initialization segment",
+            state.SegmentLength,
+            adjustedSegmentLength);
+        state.Request.SegmentLength = adjustedSegmentLength;
+    }
+
+    internal static int GetBluRayFmp4SegmentLength(
+        int segmentLength,
+        VideoType? videoType,
+        string? segmentContainer,
+        BluRayPlaybackPlan? playbackPlan,
+        int? videoStreamIndex,
+        int? audioStreamIndex)
+    {
+        if (segmentLength <= 0
+            || videoType != VideoType.BluRay
+            || !string.Equals(segmentContainer, "mp4", StringComparison.OrdinalIgnoreCase)
+            || playbackPlan?.IsSupported != true)
+        {
+            return segmentLength;
+        }
+
+        long firstSelectedStreamTime45Khz = 0;
+        foreach (var streamIndex in new[] { videoStreamIndex, audioStreamIndex })
+        {
+            if (!streamIndex.HasValue)
+            {
+                continue;
+            }
+
+            var stream = playbackPlan.Streams.FirstOrDefault(i => i.Index == streamIndex.Value);
+            if (stream?.FirstPlayItemStart45Khz > firstSelectedStreamTime45Khz)
+            {
+                firstSelectedStreamTime45Khz = stream.FirstPlayItemStart45Khz;
+            }
+        }
+
+        if (firstSelectedStreamTime45Khz <= 0)
+        {
+            return segmentLength;
+        }
+
+        // The first fMP4 fragment must not close before every selected stream has supplied a
+        // packet. AC-3 in particular cannot be described in the initialization MOOV without one.
+        var minimumLength = checked((int)(firstSelectedStreamTime45Khz / 45000) + 1);
+        return Math.Max(segmentLength, minimumLength);
     }
 
     /// <summary>
@@ -1848,7 +1978,10 @@ public class DynamicHlsController : BaseJellyfinApiController
                 }
             }
 
-            args += " -start_at_zero";
+            if (ShouldPreserveInputTimestamps(state.MediaSource.VideoType))
+            {
+                args += " -start_at_zero";
+            }
         }
         else
         {
@@ -1876,7 +2009,8 @@ public class DynamicHlsController : BaseJellyfinApiController
             if (state.SubtitleStream is not null)
             {
                 // Disable start_at_zero for external graphical subs
-                if (!(state.SubtitleStream.IsExternal && !state.SubtitleStream.IsTextSubtitleStream))
+                if (ShouldPreserveInputTimestamps(state.MediaSource.VideoType)
+                    && !(state.SubtitleStream.IsExternal && !state.SubtitleStream.IsTextSubtitleStream))
                 {
                     args += " -start_at_zero";
                 }
@@ -1907,6 +2041,42 @@ public class DynamicHlsController : BaseJellyfinApiController
         return Path.Combine(folder, filename + index.ToString(CultureInfo.InvariantCulture) + EncodingHelper.GetSegmentFileExtension(state.Request.SegmentContainer));
     }
 
+    internal static bool IsUsableSegmentFile(string segmentPath)
+    {
+        try
+        {
+            return new FileInfo(segmentPath).Length > 0;
+        }
+        catch (FileNotFoundException)
+        {
+            return false;
+        }
+        catch (DirectoryNotFoundException)
+        {
+            return false;
+        }
+    }
+
+    private void TryDeleteEmptySegmentFile(string segmentPath)
+    {
+        try
+        {
+            var file = new FileInfo(segmentPath);
+            if (file.Exists && file.Length == 0)
+            {
+                file.Delete();
+            }
+        }
+        catch (IOException ex)
+        {
+            _logger.LogWarning(ex, "Unable to delete empty HLS segment {SegmentPath}", segmentPath);
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            _logger.LogWarning(ex, "Unable to delete empty HLS segment {SegmentPath}", segmentPath);
+        }
+    }
+
     private async Task<ActionResult> GetSegmentResult(
         StreamState state,
         string playlistPath,
@@ -1916,7 +2086,7 @@ public class DynamicHlsController : BaseJellyfinApiController
         TranscodingJob? transcodingJob,
         CancellationToken cancellationToken)
     {
-        var segmentExists = System.IO.File.Exists(segmentPath);
+        var segmentExists = IsUsableSegmentFile(segmentPath);
         if (segmentExists)
         {
             if (transcodingJob is not null && transcodingJob.HasExited)
@@ -1945,7 +2115,7 @@ public class DynamicHlsController : BaseJellyfinApiController
                 // either the transcoding job should be done or next segment should also exist
                 if (segmentExists)
                 {
-                    if (transcodingJob.HasExited || System.IO.File.Exists(nextSegmentPath))
+                    if (transcodingJob.HasExited || IsUsableSegmentFile(nextSegmentPath))
                     {
                         _logger.LogDebug("Serving up {SegmentPath} as it deemed ready", segmentPath);
                         return GetSegmentResult(state, segmentPath, transcodingJob);
@@ -1953,7 +2123,7 @@ public class DynamicHlsController : BaseJellyfinApiController
                 }
                 else
                 {
-                    segmentExists = System.IO.File.Exists(segmentPath);
+                    segmentExists = IsUsableSegmentFile(segmentPath);
                     if (segmentExists)
                     {
                         continue; // avoid unnecessary waiting if segment just became available
@@ -1963,20 +2133,23 @@ public class DynamicHlsController : BaseJellyfinApiController
                 await Task.Delay(100, cancellationToken).ConfigureAwait(false);
             }
 
-            if (!System.IO.File.Exists(segmentPath))
+            if (!IsUsableSegmentFile(segmentPath))
             {
                 _logger.LogWarning("cannot serve {0} as transcoding quit before we got there", segmentPath);
+                TryDeleteEmptySegmentFile(segmentPath);
+                cancellationToken.ThrowIfCancellationRequested();
+                return StatusCode(StatusCodes.Status500InternalServerError);
             }
-            else
-            {
-                _logger.LogDebug("serving {0} as it's on disk and transcoding stopped", segmentPath);
-            }
+
+            _logger.LogDebug("serving {0} as it's on disk and transcoding stopped", segmentPath);
 
             cancellationToken.ThrowIfCancellationRequested();
         }
         else
         {
             _logger.LogWarning("cannot serve {0} as it doesn't exist and no transcode is running", segmentPath);
+            TryDeleteEmptySegmentFile(segmentPath);
+            return StatusCode(StatusCodes.Status500InternalServerError);
         }
 
         return GetSegmentResult(state, segmentPath, transcodingJob);

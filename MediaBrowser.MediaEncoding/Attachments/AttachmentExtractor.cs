@@ -95,9 +95,23 @@ namespace MediaBrowser.MediaEncoding.Attachments
         }
 
         /// <inheritdoc />
-        public async Task ExtractAllAttachments(
+        public Task ExtractAllAttachments(
             string inputFile,
             MediaSourceInfo mediaSource,
+            CancellationToken cancellationToken)
+            => ExtractAllAttachments(inputFile, mediaSource, true, cancellationToken);
+
+        /// <inheritdoc />
+        public Task ExtractAllAttachmentsFromExternalFile(
+            string inputFile,
+            MediaSourceInfo mediaSource,
+            CancellationToken cancellationToken)
+            => ExtractAllAttachments(inputFile, mediaSource, false, cancellationToken);
+
+        private async Task ExtractAllAttachments(
+            string inputFile,
+            MediaSourceInfo mediaSource,
+            bool isMediaSourceInput,
             CancellationToken cancellationToken)
         {
             var shouldExtractOneByOne = mediaSource.MediaAttachments.Any(a => !string.IsNullOrEmpty(a.FileName)
@@ -107,6 +121,7 @@ namespace MediaBrowser.MediaEncoding.Attachments
                 await ExtractAllAttachmentsIndividuallyInternal(
                     inputFile,
                     mediaSource,
+                    isMediaSourceInput,
                     cancellationToken).ConfigureAwait(false);
             }
             else
@@ -114,6 +129,7 @@ namespace MediaBrowser.MediaEncoding.Attachments
                 await ExtractAllAttachmentsInternal(
                     inputFile,
                     mediaSource,
+                    isMediaSourceInput,
                     cancellationToken).ConfigureAwait(false);
             }
         }
@@ -121,9 +137,11 @@ namespace MediaBrowser.MediaEncoding.Attachments
         private async Task ExtractAllAttachmentsIndividuallyInternal(
             string inputFile,
             MediaSourceInfo mediaSource,
+            bool isMediaSourceInput,
             CancellationToken cancellationToken)
         {
-            var inputPath = _mediaEncoder.GetInputArgument(inputFile, mediaSource);
+            var inputPath = GetInputArgument(inputFile, mediaSource, isMediaSourceInput);
+            var inputOptions = isMediaSourceInput ? _mediaEncoder.GetInputOptions(mediaSource) : string.Empty;
 
             ArgumentException.ThrowIfNullOrEmpty(inputPath);
 
@@ -173,8 +191,9 @@ namespace MediaBrowser.MediaEncoding.Attachments
                     .Any(s => s.Type == MediaStreamType.Video || s.Type == MediaStreamType.Audio);
                 var processArgs = string.Format(
                     CultureInfo.InvariantCulture,
-                    "{0}{1} -i {2} {3}",
+                    "{0}{1} {2} -i {3} {4}",
                     dumpArgs,
+                    inputOptions,
                     inputPath.EndsWith(".concat\"", StringComparison.OrdinalIgnoreCase) ? "-f concat -safe 0" : string.Empty,
                     inputPath,
                     hasVideoOrAudioStream ? "-t 0 -f null null" : string.Empty);
@@ -255,9 +274,11 @@ namespace MediaBrowser.MediaEncoding.Attachments
         private async Task ExtractAllAttachmentsInternal(
             string inputFile,
             MediaSourceInfo mediaSource,
+            bool isMediaSourceInput,
             CancellationToken cancellationToken)
         {
-            var inputPath = _mediaEncoder.GetInputArgument(inputFile, mediaSource);
+            var inputPath = GetInputArgument(inputFile, mediaSource, isMediaSourceInput);
+            var inputOptions = isMediaSourceInput ? _mediaEncoder.GetInputOptions(mediaSource) : string.Empty;
 
             ArgumentException.ThrowIfNullOrEmpty(inputPath);
 
@@ -288,7 +309,8 @@ namespace MediaBrowser.MediaEncoding.Attachments
                     .Any(s => s.Type == MediaStreamType.Video || s.Type == MediaStreamType.Audio);
                 var processArgs = string.Format(
                     CultureInfo.InvariantCulture,
-                    "-dump_attachment:t \"\" -y {0} -i {1} {2}",
+                    "-dump_attachment:t \"\" -y {0} {1} -i {2} {3}",
+                    inputOptions,
                     inputPath.EndsWith(".concat\"", StringComparison.OrdinalIgnoreCase) ? "-f concat -safe 0" : string.Empty,
                     inputPath,
                     hasVideoOrAudioStream ? "-t 0 -f null null" : string.Empty);
@@ -391,7 +413,7 @@ namespace MediaBrowser.MediaEncoding.Attachments
                 if (!File.Exists(attachmentPath))
                 {
                     await ExtractAttachmentInternal(
-                        _mediaEncoder.GetInputArgument(inputFile, mediaSource),
+                        GetInputArgument(inputFile, mediaSource, true),
                         mediaSource,
                         mediaAttachment.Index,
                         attachmentPath,
@@ -419,7 +441,8 @@ namespace MediaBrowser.MediaEncoding.Attachments
                 .Any(s => s.Type == MediaStreamType.Video || s.Type == MediaStreamType.Audio);
             var processArgs = string.Format(
                 CultureInfo.InvariantCulture,
-                "-dump_attachment:{1} \"{2}\" -i {0} {3}",
+                "-dump_attachment:{2} \"{3}\" {0} -i {1} {4}",
+                _mediaEncoder.GetInputOptions(mediaSource),
                 inputPath,
                 attachmentStreamIndex,
                 EncodingUtils.NormalizePath(outputPath),
@@ -494,6 +517,18 @@ namespace MediaBrowser.MediaEncoding.Attachments
             }
 
             _logger.LogInformation("ffmpeg attachment extraction completed for {InputPath} to {OutputPath}", inputPath, outputPath);
+        }
+
+        private string GetInputArgument(string inputFile, MediaSourceInfo mediaSource, bool isMediaSourceInput)
+        {
+            if (!isMediaSourceInput)
+            {
+                return _mediaEncoder.GetExternalSubtitleInputArgument(inputFile);
+            }
+
+            return mediaSource.VideoType == VideoType.BluRay
+                ? _mediaEncoder.GetInputPathArgument(inputFile, mediaSource)
+                : _mediaEncoder.GetInputArgument(inputFile, mediaSource);
         }
 
         /// <inheritdoc />

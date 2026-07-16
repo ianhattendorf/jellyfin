@@ -23,6 +23,15 @@ public interface IBlurayExaminer
     BlurayDiscInfo GetDiscInfo(string path, string? playlistName) => GetDiscInfo(path);
 
     /// <summary>
+    /// Gets the disc info and playback plan for a selected-playlist revision.
+    /// </summary>
+    /// <param name="path">The path.</param>
+    /// <param name="playlistName">The optional canonical playlist name to use.</param>
+    /// <param name="playlistRevision">The selected-playlist revision.</param>
+    /// <returns>BlurayDiscInfo.</returns>
+    BlurayDiscInfo GetDiscInfo(string path, string? playlistName, long playlistRevision) => GetDiscInfo(path, playlistName);
+
+    /// <summary>
     /// Gets the valid playlists for a disc.
     /// </summary>
     /// <param name="path">The path.</param>

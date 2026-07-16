@@ -308,7 +308,6 @@ public sealed class BluRayPlaylistManagerTests : IDisposable
         video.Object.Id = Guid.NewGuid();
         video.Object.Path = "/media/movie";
         video.Object.VideoType = VideoType.BluRay;
-        video.Object.BluRayDefaultPlaylistName = "00800.mpls";
         video
             .Setup(i => i.UpdateToRepositoryAsync(It.IsAny<ItemUpdateType>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
