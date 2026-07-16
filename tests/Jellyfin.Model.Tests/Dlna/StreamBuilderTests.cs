@@ -10,6 +10,7 @@ using Jellyfin.Extensions.Json;
 using MediaBrowser.Model.Dlna;
 using MediaBrowser.Model.Dto;
 using MediaBrowser.Model.Entities;
+using MediaBrowser.Model.MediaInfo;
 using MediaBrowser.Model.Session;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
@@ -580,6 +581,123 @@ namespace Jellyfin.Model.Tests
 
             return new StreamBuilder(transcodeSupport.Object, logger);
         }
+
+        [Theory]
+        [InlineData(VideoType.BluRay, MediaStreamProtocol.hls)]
+        [InlineData(VideoType.VideoFile, MediaStreamProtocol.http)]
+        public void GetOptimalVideoStream_PrefersHlsForBluRayWhenVideoCompatibilityMatches(
+            VideoType videoType,
+            MediaStreamProtocol expectedProtocol)
+        {
+            var mediaSource = CreateTranscodingProfileSelectionSource(videoType, "h264", "dts");
+            var options = CreateTranscodingProfileSelectionOptions(
+                mediaSource,
+                new TranscodingProfile
+                {
+                    Type = DlnaProfileType.Video,
+                    Context = EncodingContext.Streaming,
+                    Protocol = MediaStreamProtocol.http,
+                    Container = "ts",
+                    VideoCodec = "h264",
+                    AudioCodec = "dts,aac"
+                },
+                new TranscodingProfile
+                {
+                    Type = DlnaProfileType.Video,
+                    Context = EncodingContext.Streaming,
+                    Protocol = MediaStreamProtocol.hls,
+                    Container = "mp4",
+                    VideoCodec = "h264",
+                    AudioCodec = "aac"
+                });
+
+            var streamInfo = GetStreamBuilder().GetOptimalVideoStream(options);
+
+            Assert.NotNull(streamInfo);
+            Assert.Equal(expectedProtocol, streamInfo.SubProtocol);
+        }
+
+        [Fact]
+        public void GetOptimalVideoStream_PreservesBetterVideoCompatibilityBeforeBluRayHlsPreference()
+        {
+            var mediaSource = CreateTranscodingProfileSelectionSource(VideoType.BluRay, "hevc", "aac");
+            var options = CreateTranscodingProfileSelectionOptions(
+                mediaSource,
+                new TranscodingProfile
+                {
+                    Type = DlnaProfileType.Video,
+                    Context = EncodingContext.Streaming,
+                    Protocol = MediaStreamProtocol.http,
+                    Container = "ts",
+                    VideoCodec = "hevc",
+                    AudioCodec = "aac"
+                },
+                new TranscodingProfile
+                {
+                    Type = DlnaProfileType.Video,
+                    Context = EncodingContext.Streaming,
+                    Protocol = MediaStreamProtocol.hls,
+                    Container = "mp4",
+                    VideoCodec = "h264",
+                    AudioCodec = "aac"
+                });
+
+            var streamInfo = GetStreamBuilder().GetOptimalVideoStream(options);
+
+            Assert.NotNull(streamInfo);
+            Assert.Equal(MediaStreamProtocol.http, streamInfo.SubProtocol);
+        }
+
+        private static MediaSourceInfo CreateTranscodingProfileSelectionSource(
+            VideoType videoType,
+            string videoCodec,
+            string audioCodec)
+            => new()
+            {
+                Id = Guid.NewGuid().ToString("N"),
+                Protocol = MediaProtocol.File,
+                VideoType = videoType,
+                Container = "ts",
+                SupportsDirectPlay = true,
+                SupportsDirectStream = true,
+                SupportsTranscoding = true,
+                DefaultAudioStreamIndex = 1,
+                MediaStreams =
+                [
+                    new MediaStream
+                    {
+                        Index = 0,
+                        Type = MediaStreamType.Video,
+                        Codec = videoCodec
+                    },
+                    new MediaStream
+                    {
+                        Index = 1,
+                        Type = MediaStreamType.Audio,
+                        Codec = audioCodec,
+                        IsDefault = true
+                    }
+                ]
+            };
+
+        private static MediaOptions CreateTranscodingProfileSelectionOptions(
+            MediaSourceInfo mediaSource,
+            params TranscodingProfile[] transcodingProfiles)
+            => new()
+            {
+                ItemId = Guid.NewGuid(),
+                MediaSourceId = mediaSource.Id,
+                MediaSources = [mediaSource],
+                Profile = new DeviceProfile
+                {
+                    TranscodingProfiles = transcodingProfiles
+                },
+                Context = EncodingContext.Streaming,
+                EnableDirectPlay = false,
+                EnableDirectStream = false,
+                AllowVideoStreamCopy = true,
+                AllowAudioStreamCopy = true
+            };
 
         private static async ValueTask<MediaOptions> GetMediaOptions(string deviceProfile, params string[] sources)
         {

@@ -917,12 +917,17 @@ namespace MediaBrowser.Model.Dlna
 
                     return (Profile: transcodingProfile, PlayMethod: playMethod, Rank: rank);
                 })
-                .OrderBy(analysis => analysis.Rank);
+                .OrderBy(analysis => analysis.Rank.Video)
+                .ThenBy(analysis => GetVideoTranscodeProtocolRank(item.VideoType, analysis.Profile.Protocol))
+                .ThenBy(analysis => analysis.Rank.Audio);
 
             var profileMatch = analyzedProfiles.FirstOrDefault();
 
             return (profileMatch.Profile, profileMatch.PlayMethod);
         }
+
+        private static int GetVideoTranscodeProtocolRank(VideoType? videoType, MediaStreamProtocol protocol)
+            => videoType == VideoType.BluRay && protocol == MediaStreamProtocol.hls ? 0 : 1;
 
         private void BuildStreamVideoItem(
             StreamInfo playlistItem,
