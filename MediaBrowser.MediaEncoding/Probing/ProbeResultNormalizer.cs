@@ -105,7 +105,17 @@ namespace MediaBrowser.MediaEncoding.Probing
             };
 
             FFProbeHelpers.NormalizeFFProbeResult(data);
-            SetSize(data, info);
+            var isBluRayConcatInput = videoType == VideoType.BluRay
+                && data.Format?.FormatName?.Split(',')
+                    .Any(i => string.Equals(i.Trim(), "concat", StringComparison.OrdinalIgnoreCase)) == true;
+
+            // FFconcat is an implementation detail used to expose the selected Blu-ray playlist
+            // to FFmpeg. Its format, size, and bitrate describe the text manifest rather than the
+            // transport stream represented by the media source.
+            if (!isBluRayConcatInput)
+            {
+                SetSize(data, info);
+            }
 
             var internalStreams = data.Streams ?? Array.Empty<MediaStreamInfo>();
             var internalFrames = data.Frames ?? Array.Empty<MediaFrameInfo>();
@@ -122,9 +132,12 @@ namespace MediaBrowser.MediaEncoding.Probing
 
             if (data.Format is not null)
             {
-                info.Container = NormalizeFormat(data.Format.FormatName, info.MediaStreams);
+                info.Container = isBluRayConcatInput
+                    ? "ts"
+                    : NormalizeFormat(data.Format.FormatName, info.MediaStreams);
 
-                if (int.TryParse(data.Format.BitRate, CultureInfo.InvariantCulture, out var value))
+                if (!isBluRayConcatInput
+                    && int.TryParse(data.Format.BitRate, CultureInfo.InvariantCulture, out var value))
                 {
                     info.Bitrate = value;
                 }

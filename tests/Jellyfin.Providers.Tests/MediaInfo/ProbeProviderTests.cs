@@ -68,4 +68,20 @@ public class ProbeProviderTests
 
         Assert.False(ProbeProvider.IsBluRayPlaylistProbeRequired(video, null));
     }
+
+    [Fact]
+    public void IsBluRayPlaylistProbeRequired_WithSyntheticConcatMetadata_ReturnsTrue()
+    {
+        var video = new Video
+        {
+            VideoType = VideoType.BluRay,
+            Container = "concat",
+            BluRayPlaylistProbeVersion = Video.CurrentBluRayPlaylistProbeVersion,
+            BluRayPlaylistRevision = 2,
+            BluRayLastProbedPlaylistRevision = 2,
+            BluRayDiscFingerprint = "fingerprint"
+        };
+
+        Assert.True(ProbeProvider.IsBluRayPlaylistProbeRequired(video, "fingerprint"));
+    }
 }

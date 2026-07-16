@@ -242,6 +242,42 @@ namespace Jellyfin.MediaEncoding.Tests.Probing
             Assert.False(res.MediaStreams[0].IsAVC);
         }
 
+        [Theory]
+        [InlineData(VideoType.BluRay, "ts", null, null)]
+        [InlineData(VideoType.VideoFile, "concat", 1064L, 1)]
+        public void GetMediaInfo_BluRayConcat_NormalizesManifestMetadata(
+            VideoType videoType,
+            string expectedContainer,
+            long? expectedSize,
+            int? expectedBitrate)
+        {
+            var internalMediaInfoResult = new InternalMediaInfoResult
+            {
+                Streams = [],
+                Frames = [],
+                Chapters = [],
+                Format = new MediaFormatInfo
+                {
+                    FormatName = "concat",
+                    Duration = "5724.500000",
+                    Size = "1064",
+                    BitRate = "1"
+                }
+            };
+
+            var result = _probeResultNormalizer.GetMediaInfo(
+                internalMediaInfoResult,
+                videoType,
+                false,
+                "/media/movie/BDMV",
+                MediaProtocol.File);
+
+            Assert.Equal(expectedContainer, result.Container);
+            Assert.Equal(expectedSize, result.Size);
+            Assert.Equal(expectedBitrate, result.Bitrate);
+            Assert.Equal(TimeSpan.FromSeconds(5724.5).Ticks, result.RunTimeTicks);
+        }
+
         [Fact]
         public void GetMediaInfo_WebM_Success()
         {

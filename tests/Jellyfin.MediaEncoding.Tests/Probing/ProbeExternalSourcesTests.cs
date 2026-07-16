@@ -48,7 +48,7 @@ namespace Jellyfin.MediaEncoding.Tests.Probing
         }
 
         [Fact]
-        public void GetExtraArguments_Forwards_BluRayPlaylist()
+        public void GetExtraArguments_Forwards_BluRayConcatOptions()
         {
             var encoder = new MediaEncoder(
                 Mock.Of<ILogger<MediaEncoder>>(),
@@ -58,6 +58,28 @@ namespace Jellyfin.MediaEncoding.Tests.Probing
                 Mock.Of<ILocalizationManager>(),
                 new ConfigurationBuilder().Build(),
                 Mock.Of<IServerConfigurationManager>());
+            var playbackPlan = new BluRayPlaybackPlan
+            {
+                PlaylistName = "00800.mpls",
+                Streams =
+                [
+                    new BluRayPlaybackStream
+                    {
+                        Pid = 0x1011,
+                        Type = MediaBrowser.Model.Entities.MediaStreamType.Video,
+                        Codec = "h264"
+                    }
+                ],
+                PlayItems =
+                [
+                    new BluRayPlaybackItem
+                    {
+                        ClipFileName = "00001.m2ts",
+                        OutTime45Khz = 90_000
+                    }
+                ]
+            };
+            playbackPlan.UpdatePlanHash();
             var req = new MediaBrowser.Controller.MediaEncoding.MediaInfoRequest()
             {
                 MediaSource = new MediaBrowser.Model.Dto.MediaSourceInfo
@@ -65,14 +87,16 @@ namespace Jellyfin.MediaEncoding.Tests.Probing
                     Path = "/media/movie/BDMV",
                     Protocol = MediaProtocol.File,
                     VideoType = MediaBrowser.Model.Entities.VideoType.BluRay,
-                    BluRayPlaylistName = "00800.mpls"
+                    BluRayPlaylistName = "00800.mpls",
+                    BluRayPlaybackPlan = playbackPlan
                 },
                 MediaType = MediaBrowser.Model.Dlna.DlnaProfileType.Video,
             };
 
             var extraArg = encoder.GetExtraArguments(req);
 
-            Assert.Contains("-playlist 800", extraArg, StringComparison.Ordinal);
+            Assert.Contains("-f concat -safe 0", extraArg, StringComparison.Ordinal);
+            Assert.DoesNotContain("-playlist", extraArg, StringComparison.Ordinal);
         }
     }
 }

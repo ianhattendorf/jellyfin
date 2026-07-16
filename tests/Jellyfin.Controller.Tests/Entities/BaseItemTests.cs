@@ -366,6 +366,44 @@ public class BaseItemTests
     }
 
     [Fact]
+    public void GetMediaSources_WithSyntheticBluRayConcatMetadata_NormalizesMediaSource()
+    {
+        var video = new Video
+        {
+            Id = Guid.NewGuid(),
+            Path = "/media/movie",
+            VideoType = VideoType.BluRay,
+            Container = "concat",
+            Size = 1064,
+            TotalBitrate = 1
+        };
+        var mediaSourceManager = new Mock<IMediaSourceManager>();
+        mediaSourceManager.Setup(i => i.GetMediaStreams(video.Id)).Returns(
+        [
+            new MediaStream
+            {
+                Type = MediaStreamType.Video,
+                BitRate = 30_000_000
+            }
+        ]);
+        mediaSourceManager.Setup(i => i.GetMediaAttachments(video.Id)).Returns([]);
+        mediaSourceManager.Setup(i => i.GetPathProtocol(video.Path)).Returns(MediaProtocol.File);
+        var libraryManager = new Mock<ILibraryManager>();
+        libraryManager.Setup(i => i.GetLinkedAlternateVersions(video)).Returns([]);
+        libraryManager.Setup(i => i.GetLocalAlternateVersionIds(video)).Returns([]);
+        BaseItem.MediaSourceManager = mediaSourceManager.Object;
+        BaseItem.LibraryManager = libraryManager.Object;
+        BaseItem.MediaSegmentManager = Mock.Of<IMediaSegmentManager>(i => !i.IsTypeSupported(video));
+        Video.RecordingsManager = Mock.Of<IRecordingsManager>(i => i.GetActiveRecordingInfo(video.Path) == null);
+
+        var mediaSource = Assert.Single(video.GetMediaSources(false));
+
+        Assert.Equal("ts", mediaSource.Container);
+        Assert.Null(mediaSource.Size);
+        Assert.Equal(30_000_000, mediaSource.Bitrate);
+    }
+
+    [Fact]
     public void GetMediaSources_WithBluRayManualPlaylist_UsesManualSelection()
     {
         var playbackPlan = new BluRayPlaybackPlan

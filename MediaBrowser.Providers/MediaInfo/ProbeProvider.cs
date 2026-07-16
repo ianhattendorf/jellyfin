@@ -192,7 +192,8 @@ namespace MediaBrowser.Providers.MediaInfo
                 return false;
             }
 
-            if (video.BluRayPlaylistProbeVersion != Video.CurrentBluRayPlaylistProbeVersion
+            if (string.Equals(video.Container, "concat", StringComparison.OrdinalIgnoreCase)
+                || video.BluRayPlaylistProbeVersion != Video.CurrentBluRayPlaylistProbeVersion
                 || video.BluRayPlaylistRevision != video.BluRayLastProbedPlaylistRevision
                 || string.IsNullOrWhiteSpace(currentFingerprint)
                 || !string.Equals(video.BluRayDiscFingerprint, currentFingerprint, StringComparison.Ordinal))

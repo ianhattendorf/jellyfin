@@ -1164,6 +1164,8 @@ namespace MediaBrowser.Controller.Entities
             }
 
             var video = item as Video;
+            var hasSyntheticBluRayProbeMetadata = video?.VideoType == VideoType.BluRay
+                && string.Equals(item.Container, "concat", StringComparison.OrdinalIgnoreCase);
             if (video is not null)
             {
                 info.IsoType = video.IsoType;
@@ -1172,6 +1174,17 @@ namespace MediaBrowser.Controller.Entities
                 info.BluRayPlaybackPlan = video.BluRayPlaybackPlan;
                 info.Video3DFormat = video.Video3DFormat;
                 info.Timestamp = video.Timestamp;
+
+                if (video.VideoType == VideoType.BluRay)
+                {
+                    // FFconcat is only the internal selected-playlist input. The media exposed to
+                    // clients and output muxers is still an MPEG transport stream.
+                    info.Container = "ts";
+                    if (hasSyntheticBluRayProbeMetadata)
+                    {
+                        info.Size = null;
+                    }
+                }
 
                 if (video.IsShortcut && !string.IsNullOrEmpty(video.ShortcutPath))
                 {
@@ -1217,7 +1230,7 @@ namespace MediaBrowser.Controller.Entities
                 info.SupportsDirectStream = false;
             }
 
-            info.Bitrate = item.TotalBitrate;
+            info.Bitrate = hasSyntheticBluRayProbeMetadata ? null : item.TotalBitrate;
             info.InferTotalBitrate();
 
             return info;
