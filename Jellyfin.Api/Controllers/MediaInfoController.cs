@@ -13,6 +13,7 @@ using MediaBrowser.Common.Extensions;
 using MediaBrowser.Controller.Devices;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
+using MediaBrowser.Model.Dlna;
 using MediaBrowser.Model.MediaInfo;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
@@ -172,6 +173,24 @@ public class MediaInfoController : BaseJellyfinApiController
         if (item is null)
         {
             return NotFound();
+        }
+
+        if (profile is null && item is Video video)
+        {
+            var fallbackProfile = new DeviceProfile
+            {
+                MaxStreamingBitrate = int.MaxValue,
+                MaxStaticBitrate = int.MaxValue
+            };
+            var effectiveProfile = MediaInfoHelper.GetEffectiveDeviceProfile(
+                fallbackProfile,
+                video.VideoType,
+                User.GetClient());
+            if (!ReferenceEquals(fallbackProfile, effectiveProfile))
+            {
+                _logger.LogDebug("Creating an Infuse Blu-ray HLS compatibility profile for PlaybackInfo");
+                profile = effectiveProfile;
+            }
         }
 
         var info = await _mediaInfoHelper.GetPlaybackInfo(

@@ -36,6 +36,8 @@ namespace Jellyfin.Api.Helpers;
 /// </summary>
 public class MediaInfoHelper
 {
+    private const string InfuseDirectClientName = "Infuse-Direct";
+
     private readonly IUserManager _userManager;
     private readonly ILibraryManager _libraryManager;
     private readonly IMediaSourceManager _mediaSourceManager;
@@ -188,6 +190,15 @@ public class MediaInfoHelper
         bool alwaysBurnInSubtitleWhenTranscoding,
         IPAddress ipAddress)
     {
+        var effectiveProfile = GetEffectiveDeviceProfile(profile, mediaSource.VideoType, claimsPrincipal.GetClient());
+        if (!ReferenceEquals(profile, effectiveProfile))
+        {
+            _logger.LogDebug(
+                "Applying Infuse Blu-ray HLS compatibility profile to media source {MediaSourceId}",
+                mediaSource.Id);
+            profile = effectiveProfile;
+        }
+
         var streamBuilder = new StreamBuilder(_mediaEncoder, _logger);
 
         var options = new MediaOptions
@@ -344,6 +355,51 @@ public class MediaInfoHelper
                 mediaSource.Id,
                 attachment.Index);
         }
+    }
+
+    internal static DeviceProfile GetEffectiveDeviceProfile(
+        DeviceProfile profile,
+        VideoType? videoType,
+        string? clientName)
+    {
+        if (videoType != VideoType.BluRay
+            || !string.Equals(clientName, InfuseDirectClientName, StringComparison.OrdinalIgnoreCase)
+            || profile.TranscodingProfiles.Any(i =>
+                i.Type == DlnaProfileType.Video
+                && i.Context == EncodingContext.Streaming
+                && i.Protocol == MediaStreamProtocol.hls))
+        {
+            return profile;
+        }
+
+        return new DeviceProfile
+        {
+            Name = profile.Name,
+            Id = profile.Id,
+            MaxStreamingBitrate = profile.MaxStreamingBitrate,
+            MaxStaticBitrate = profile.MaxStaticBitrate,
+            MusicStreamingTranscodingBitrate = profile.MusicStreamingTranscodingBitrate,
+            MaxStaticMusicBitrate = profile.MaxStaticMusicBitrate,
+            DirectPlayProfiles = profile.DirectPlayProfiles,
+            TranscodingProfiles =
+            [
+                new TranscodingProfile
+                {
+                    Container = "mp4",
+                    Type = DlnaProfileType.Video,
+                    VideoCodec = "h264,hevc",
+                    AudioCodec = "aac,eac3,ac3",
+                    Protocol = MediaStreamProtocol.hls,
+                    Context = EncodingContext.Streaming,
+                    MaxAudioChannels = "6",
+                    SegmentLength = 6
+                },
+                .. profile.TranscodingProfiles
+            ],
+            ContainerProfiles = profile.ContainerProfiles,
+            CodecProfiles = profile.CodecProfiles,
+            SubtitleProfiles = profile.SubtitleProfiles
+        };
     }
 
     /// <summary>

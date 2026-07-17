@@ -1,12 +1,15 @@
 using System;
 using System.Globalization;
 using Jellyfin.Api.Helpers;
+using Jellyfin.Data.Enums;
 using MediaBrowser.Common.Net;
 using MediaBrowser.Controller.Configuration;
 using MediaBrowser.Controller.Devices;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.MediaEncoding;
+using MediaBrowser.Model.Dlna;
 using MediaBrowser.Model.Dto;
+using MediaBrowser.Model.Entities;
 using MediaBrowser.Model.MediaInfo;
 using Microsoft.Extensions.Logging;
 using Moq;
@@ -94,6 +97,92 @@ namespace Jellyfin.Api.Tests.Helpers
             CreateHelper().SortMediaSources(result, maxBitrate: 20_000_000, Guid.NewGuid());
 
             Assert.Equal(directPlay.Id, result.MediaSources[0].Id);
+        }
+
+        [Fact]
+        public void GetEffectiveDeviceProfile_InfuseBluRayWithoutHls_AddsRequestLocalHlsProfile()
+        {
+            var httpProfile = new TranscodingProfile
+            {
+                Container = "ts",
+                Type = DlnaProfileType.Video,
+                VideoCodec = "h264,hevc",
+                AudioCodec = "aac",
+                Protocol = MediaStreamProtocol.http,
+                Context = EncodingContext.Streaming
+            };
+            var profile = new DeviceProfile
+            {
+                Name = "Infuse",
+                MaxStreamingBitrate = 100_000_000,
+                TranscodingProfiles = [httpProfile]
+            };
+
+            var result = MediaInfoHelper.GetEffectiveDeviceProfile(profile, VideoType.BluRay, "Infuse-Direct");
+
+            Assert.NotSame(profile, result);
+            Assert.Single(profile.TranscodingProfiles);
+            Assert.Equal(2, result.TranscodingProfiles.Length);
+            Assert.Same(httpProfile, result.TranscodingProfiles[1]);
+            Assert.Equal(profile.Name, result.Name);
+            Assert.Equal(profile.MaxStreamingBitrate, result.MaxStreamingBitrate);
+
+            var hlsProfile = result.TranscodingProfiles[0];
+            Assert.Equal(DlnaProfileType.Video, hlsProfile.Type);
+            Assert.Equal(EncodingContext.Streaming, hlsProfile.Context);
+            Assert.Equal(MediaStreamProtocol.hls, hlsProfile.Protocol);
+            Assert.Equal("mp4", hlsProfile.Container);
+            Assert.Equal("h264,hevc", hlsProfile.VideoCodec);
+            Assert.Equal("aac,eac3,ac3", hlsProfile.AudioCodec);
+            Assert.Equal("6", hlsProfile.MaxAudioChannels);
+            Assert.Equal(6, hlsProfile.SegmentLength);
+        }
+
+        [Theory]
+        [InlineData(VideoType.VideoFile, "Infuse-Direct")]
+        [InlineData(VideoType.BluRay, "Jellyfin Desktop")]
+        [InlineData(VideoType.BluRay, null)]
+        public void GetEffectiveDeviceProfile_NonMatchingRequest_ReturnsOriginalProfile(
+            VideoType videoType,
+            string? clientName)
+        {
+            var profile = new DeviceProfile
+            {
+                TranscodingProfiles =
+                [
+                    new TranscodingProfile
+                    {
+                        Type = DlnaProfileType.Video,
+                        Protocol = MediaStreamProtocol.http,
+                        Context = EncodingContext.Streaming
+                    }
+                ]
+            };
+
+            var result = MediaInfoHelper.GetEffectiveDeviceProfile(profile, videoType, clientName);
+
+            Assert.Same(profile, result);
+        }
+
+        [Fact]
+        public void GetEffectiveDeviceProfile_InfuseBluRayWithHls_ReturnsOriginalProfile()
+        {
+            var profile = new DeviceProfile
+            {
+                TranscodingProfiles =
+                [
+                    new TranscodingProfile
+                    {
+                        Type = DlnaProfileType.Video,
+                        Protocol = MediaStreamProtocol.hls,
+                        Context = EncodingContext.Streaming
+                    }
+                ]
+            };
+
+            var result = MediaInfoHelper.GetEffectiveDeviceProfile(profile, VideoType.BluRay, "infuse-direct");
+
+            Assert.Same(profile, result);
         }
     }
 }
